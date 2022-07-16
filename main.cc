@@ -22,10 +22,6 @@ namespace elf {
 int main(int argc, char **argv);
 }
 
-namespace macho {
-int main(int argc, char **argv);
-}
-
 void cleanup() {
   if (output_tmpfile)
     unlink(output_tmpfile);
@@ -80,9 +76,6 @@ i64 get_default_thread_count() {
 
 int main(int argc, char **argv) {
   std::string cmd = mold::filepath(argv[0]).filename();
-
-  if (cmd == "ld64" || cmd == "ld64.mold")
-    return mold::macho::main(argc, argv);
 
   return mold::elf::main(argc, argv);
 }

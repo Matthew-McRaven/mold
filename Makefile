@@ -13,11 +13,7 @@ INSTALL_DATA = $(INSTALL) -m 644
 OS := $(shell uname -s)
 ARCH := $(shell uname -m)
 
-ifeq ($(OS), Darwin)
-  TESTS := $(wildcard test/macho/*.sh)
-else
   TESTS := $(wildcard test/elf/*.sh)
-endif
 
 D = $(DESTDIR)
 
@@ -31,13 +27,10 @@ endif
 # `STRIP=true` to run /bin/true instead of the strip command.
 STRIP = strip
 
-SRCS = $(wildcard *.cc elf/*.cc macho/*.cc)
+SRCS = $(wildcard *.cc elf/*.cc)
 OBJS = $(SRCS:%.cc=out/%.o) out/rust-demangle.o
 
 IS_ANDROID = 0
-ifneq ($(findstring -android,$(shell $(CC) -dumpmachine)),)
-  IS_ANDROID = 1
-endif
 
 # If you want to compile mold for debugging, invoke make as
 # `make CXXFLAGS=-g`.
@@ -68,11 +61,6 @@ endif
 # By default, we want to use mimalloc as a memory allocator. mimalloc
 # is disabled on macOS and Android because it didn't work on those hosts.
 USE_MIMALLOC = 1
-ifeq ($(OS), Darwin)
-  USE_MIMALLOC = 0
-else ifeq ($(IS_ANDROID), 1)
-  USE_MIMALLOC = 0
-endif
 
 ifeq ($(USE_MIMALLOC), 1)
   ifdef SYSTEM_MIMALLOC
@@ -115,10 +103,6 @@ ifneq (,$(filter armv6% riscv64, $(ARCH)))
   MOLD_LDFLAGS += -latomic
 endif
 
-# -Wc++11-narrowing is a fatal error on Android, so disable it.
-ifeq ($(IS_ANDROID), 1)
-  MOLD_CXXFLAGS += -Wno-c++11-narrowing
-endif
 
 ifeq ($(OS), Linux)
   MOLD_WRAPPER_LDFLAGS = -Wl,-push-state -Wl,-no-as-needed -ldl -Wl,-pop-state
@@ -141,10 +125,10 @@ mold-wrapper.so: elf/mold-wrapper.c
 out/rust-demangle.o: third-party/rust-demangle/rust-demangle.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-out/%.o: %.cc out/elf/.keep out/macho/.keep
+out/%.o: %.cc out/elf/.keep 
 	$(CXX) $(MOLD_CXXFLAGS) $(DEPFLAGS) $(CXXFLAGS) -c -o $@ $<
 
-out/elf/.keep out/macho/.keep:
+out/elf/.keep:
 	mkdir -p $(@D)
 	touch $@
 
@@ -160,11 +144,7 @@ $(TBB_LIB):
 	(cd out/tbb; ln -sf *_relwithdebinfo libs)
 
 test tests check: all
-ifeq ($(OS), Darwin)
-	@$(MAKE) $(TESTS) --no-print-directory
-else
 	@$(MAKE) $(TESTS) --no-print-directory --output-sync
-endif
 
 	@if test -t 1; then \
 	  printf '\e[32mPassed all tests\e[0m\n'; \
@@ -197,11 +177,7 @@ test-all: all
 # command output. `tail -r` outputs an input from the last line to the
 # first.
 $(TESTS):
-ifeq ($(OS), Darwin)
-	@set -o pipefail; ./$@ 2>&1 | tail -r | tail -r
-else
 	@./$@
-endif
 
 install: all
 	$(INSTALL) -d $D$(BINDIR)
