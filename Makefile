@@ -199,9 +199,6 @@ install: all
 	$(INSTALL) -d $D$(MANDIR)/man1
 	$(INSTALL_DATA) docs/mold.1 $D$(MANDIR)/man1
 
-	ln -sf mold $D$(BINDIR)/ld.mold
-	ln -sf mold $D$(BINDIR)/ld64.mold
-
 uninstall:
 	rm -f $D$(BINDIR)/mold $D$(BINDIR)/ld.mold $D$(BINDIR)/ld64.mold
 	rm -f $D$(MANDIR)/man1/mold.1
