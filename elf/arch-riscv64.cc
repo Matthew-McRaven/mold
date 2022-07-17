@@ -1,8 +1,5 @@
 #include "mold.h"
 
-#include <tbb/parallel_for.h>
-#include <tbb/parallel_for_each.h>
-
 namespace mold::elf {
 
 using E = RISCV64;
@@ -795,11 +792,12 @@ i64 riscv_resize_sections(Context<E> &ctx) {
 
   // Find R_RISCV_CALL AND R_RISCV_CALL_PLT that can be relaxed.
   // This step should only shrink sections.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto it :ctx.objs) {
+    ObjectFile<E> *file = it;
     for (std::unique_ptr<InputSection<E>> &isec : file->sections)
       if (is_resizable(ctx, isec.get()))
         relax_section(ctx, *isec);
-  });
+  };
 
   // Re-compute section offset again to finalize them.
   compute_section_sizes(ctx);
