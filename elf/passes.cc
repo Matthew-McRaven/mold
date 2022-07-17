@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <functional>
+#include <list>
 #include <map>
 #include <optional>
 #include <random>
@@ -110,7 +111,7 @@ static void mark_live_objects(Context<E> &ctx) {
   for (std::string_view name : ctx.arg.require_defined)
     mark_symbol(name);
 
-  std::vector<InputFile<E> *> roots;
+  std::list<InputFile<E> *> roots;
 
   for (InputFile<E> *file : ctx.objs)
     if (file->is_alive)
@@ -120,18 +121,17 @@ static void mark_live_objects(Context<E> &ctx) {
     if (file->is_alive)
       roots.push_back(file);
 
-  tbb::parallel_for_each(roots, [&](InputFile<E> *file,
-                                    tbb::feeder<InputFile<E> *> &feeder) {
-    if (file->is_alive)
-      file->mark_live_objects(ctx, [&](InputFile<E> *obj) { feeder.add(obj); });
-  });
+  for(auto file=roots.begin(); file!=roots.end(); ++file) {
+    if ((*file)->is_alive)
+      (*file)->mark_live_objects(ctx, [&](InputFile<E> *obj) { roots.push_back(obj); });
+  }
 }
 
 template <typename E>
 void do_resolve_symbols(Context<E> &ctx) {
   auto for_each_file = [&](std::function<void(InputFile<E> *)> fn) {
-    tbb::parallel_for_each(ctx.objs, fn);
-    tbb::parallel_for_each(ctx.dsos, fn);
+    for(auto obj : ctx.objs) fn(obj);
+    for(auto obj : ctx.dsos) fn(obj);
   };
 
   // Register symbols
@@ -199,15 +199,15 @@ void resolve_symbols(Context<E> &ctx) {
     std::erase_if(ctx.objs, [](ObjectFile<E> *file) { return file->is_lto_obj; });
 
     // Redo name resolution from scratch.
-    tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+    for(auto file : ctx.objs) {
       file->clear_symbols();
       file->is_alive = !file->is_in_lib;
-    });
+    };
 
-    tbb::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
+    for(auto file : ctx.dsos) {
       file->clear_symbols();
       file->is_alive = !file->is_needed;
-    });
+    };
 
     do_resolve_symbols(ctx);
   }
@@ -217,31 +217,31 @@ template <typename E>
 void register_section_pieces(Context<E> &ctx) {
   Timer t(ctx, "register_section_pieces");
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->register_section_pieces(ctx);
-  });
+  };
 }
 
 template <typename E>
 void eliminate_comdats(Context<E> &ctx) {
   Timer t(ctx, "eliminate_comdats");
 
-  tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->resolve_comdat_groups();
-  });
+  };
 
-  tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->eliminate_duplicate_comdat_groups();
-  });
+  };
 }
 
 template <typename E>
 void convert_common_symbols(Context<E> &ctx) {
   Timer t(ctx, "convert_common_symbols");
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->convert_common_symbols(ctx);
-  });
+  };
 }
 
 template <typename E>
@@ -269,12 +269,12 @@ void compute_merged_section_sizes(Context<E> &ctx) {
 
   // Mark section fragments referenced by live objects.
   if (!ctx.arg.gc_sections) {
-    tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+    for(auto file : ctx.objs) {
       for (std::unique_ptr<MergeableSection<E>> &m : file->mergeable_sections)
         if (m)
           for (SectionFragment<E> *frag : m->fragments)
             frag->is_alive.store(true, std::memory_order_relaxed);
-    });
+    };
   }
 
   // Add an identification string to .comment.
@@ -285,10 +285,9 @@ void compute_merged_section_sizes(Context<E> &ctx) {
     add_comment_string(ctx, "mold command line: " + get_cmdline_args(ctx));
 
   Timer t2(ctx, "MergedSection assign_offsets");
-  tbb::parallel_for_each(ctx.merged_sections,
-                         [&](std::unique_ptr<MergedSection<E>> &sec) {
+  for(auto& sec : ctx.merged_sections) {
     sec->assign_offsets(ctx);
-  });
+  };
 }
 
 template <typename T>
@@ -328,12 +327,12 @@ void bin_sections(Context<E> &ctx) {
   for (i64 i = 0; i < groups.size(); i++)
     groups[i].resize(num_osec);
 
-  tbb::parallel_for((i64)0, (i64)slices.size(), [&](i64 i) {
+  for(i64 i=0; i<(i64)slices.size();i++) {
     for (ObjectFile<E> *file : slices[i])
       for (std::unique_ptr<InputSection<E>> &isec : file->sections)
         if (isec && isec->is_alive)
           groups[i][isec->output_section->idx].push_back(isec.get());
-  });
+  };
 
   std::vector<i64> sizes(num_osec);
 
@@ -341,11 +340,11 @@ void bin_sections(Context<E> &ctx) {
     for (i64 i = 0; i < group.size(); i++)
       sizes[i] += group[i].size();
 
-  tbb::parallel_for((i64)0, num_osec, [&](i64 j) {
+  for(i64 j=0; j<num_osec; j++) {
     ctx.output_sections[j]->members.reserve(sizes[j]);
     for (i64 i = 0; i < groups.size(); i++)
       append(ctx.output_sections[j]->members, groups[i][j]);
-  });
+  };
 }
 
 // Create a dummy object file containing linker-synthesized
@@ -626,7 +625,7 @@ template <typename E>
 void check_duplicate_symbols(Context<E> &ctx) {
   Timer t(ctx, "check_duplicate_symbols");
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (i64 i = file->first_global; i < file->elf_syms.size(); i++) {
       const ElfSym<E> &esym = file->elf_syms[i];
       Symbol<E> &sym = *file->symbols[i];
@@ -644,7 +643,7 @@ void check_duplicate_symbols(Context<E> &ctx) {
       Error(ctx) << "duplicate symbol: " << *file << ": " << *sym.file
                  << ": " << sym;
     }
-  });
+  };
 
   ctx.checkpoint();
 }
@@ -759,19 +758,17 @@ void shuffle_sections(Context<E> &ctx) {
     else
       seed = ((u64)std::random_device()() << 32) | std::random_device()();
 
-    tbb::parallel_for_each(ctx.output_sections,
-                           [&](std::unique_ptr<OutputSection<E>> &osec) {
+    for(auto& osec: ctx.output_sections) {
       if (is_eligible(*osec))
         shuffle(osec->members, seed + hash_string(osec->name));
-    });
+    };
     break;
   }
   case SHUFFLE_SECTIONS_REVERSE:
-    tbb::parallel_for_each(ctx.output_sections,
-                           [&](std::unique_ptr<OutputSection<E>> &osec) {
+    for(auto& osec : ctx.output_sections) {
       if (is_eligible(*osec))
         std::reverse(osec->members.begin(), osec->members.end());
-    });
+    };
     break;
   }
 }
@@ -808,12 +805,11 @@ void compute_section_sizes(Context<E> &ctx) {
     std::span<InputSection<E> *> members;
   };
 
-  tbb::parallel_for_each(ctx.output_sections,
-                         [&](std::unique_ptr<OutputSection<E>> &osec) {
+  for(auto& osec :ctx.output_sections) {
     // This pattern will be processed in the next loop.
     if constexpr (std::is_same_v<E, ARM64>)
       if (osec->shdr.sh_flags & SHF_EXECINSTR)
-        return;
+        continue;
 
     // Since one output section may contain millions of input sections,
     // we first split input sections into groups and assign offsets to
@@ -824,12 +820,12 @@ void compute_section_sizes(Context<E> &ctx) {
     for (std::span<InputSection<E> *> span : split(osec->members, group_size))
       groups.push_back(Group{.members = span});
 
-    tbb::parallel_for_each(groups, [](Group &group) {
+    for(auto& group : groups) {
       for (InputSection<E> *isec : group.members) {
         group.size = align_to(group.size, 1 << isec->p2align) + isec->sh_size;
         group.p2align = std::max<i64>(group.p2align, isec->p2align);
       }
-    });
+    };
 
     i64 offset = 0;
     i64 p2align = 0;
@@ -845,15 +841,15 @@ void compute_section_sizes(Context<E> &ctx) {
     osec->shdr.sh_addralign = 1 << p2align;
 
     // Assign offsets to input sections.
-    tbb::parallel_for_each(groups, [](Group &group) {
+    for(auto& group : groups) {
       i64 offset = group.offset;
       for (InputSection<E> *isec : group.members) {
         offset = align_to(offset, 1 << isec->p2align);
         isec->offset = offset;
         offset += isec->sh_size;
       }
-    });
-  });
+    };
+  };
 
   // On ARM64, we may need to create so-called "range extension thunks" to
   // extend branch instructions reach, as they can jump only to ±128 MiB.
@@ -869,9 +865,9 @@ void compute_section_sizes(Context<E> &ctx) {
 template <typename E>
 void claim_unresolved_symbols(Context<E> &ctx) {
   Timer t(ctx, "claim_unresolved_symbols");
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->claim_unresolved_symbols(ctx);
-  });
+  };
 }
 
 template <typename E>
@@ -879,9 +875,9 @@ void scan_rels(Context<E> &ctx) {
   Timer t(ctx, "scan_rels");
 
   // Scan relocations to find dynamic symbols.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->scan_relocations(ctx);
-  });
+  };
 
   // Exit if there was a relocation that refers an undefined symbol.
   ctx.checkpoint();
@@ -893,12 +889,12 @@ void scan_rels(Context<E> &ctx) {
 
   std::vector<std::vector<Symbol<E> *>> vec(files.size());
 
-  tbb::parallel_for((i64)0, (i64)files.size(), [&](i64 i) {
+  for(i64 i=0; i<(i64)files.size(); i++) {
     for (Symbol<E> *sym : files[i]->symbols)
       if (sym->file == files[i])
         if (sym->flags || sym->is_imported || sym->is_exported)
           vec[i].push_back(sym);
-  });
+  };
 
   std::vector<Symbol<E> *> syms = flatten(vec);
   ctx.symbol_aux.reserve(syms.size());
@@ -1015,18 +1011,17 @@ void create_reloc_sections(Context<E> &ctx) {
         file->output_sym_indices[i] = j++;
   };
 
-  tbb::parallel_for_each(ctx.objs, set_indices);
-  tbb::parallel_for_each(ctx.dsos, set_indices);
+  for(auto object : ctx.objs) set_indices(object);
+  for(auto object : ctx.dsos) set_indices(object);
 }
 
 template <typename E>
 void construct_relr(Context<E> &ctx) {
   Timer t(ctx, "construct_relr");
 
-  tbb::parallel_for_each(ctx.output_sections,
-                         [&](std::unique_ptr<OutputSection<E>> &osec) {
+  for(auto& osec: ctx.output_sections) {
     osec->construct_relr(ctx);
-  });
+  };
 
   ctx.got->construct_relr(ctx);
 }
@@ -1035,13 +1030,13 @@ template <typename E>
 void create_output_symtab(Context<E> &ctx) {
   Timer t(ctx, "compute_symtab");
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->compute_symtab(ctx);
-  });
+  };
 
-  tbb::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
+  for(auto file : ctx.dsos) {
     file->compute_symtab(ctx);
-  });
+  };
 }
 
 template <typename E>
@@ -1080,7 +1075,7 @@ void apply_version_script(Context<E> &ctx) {
     }
   }
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (Symbol<E> *sym : file->get_global_syms()) {
       if (sym->file != file)
         continue;
@@ -1097,7 +1092,7 @@ void apply_version_script(Context<E> &ctx) {
           if (std::optional<u16> ver = cpp_matcher.find(*s))
             sym->ver_idx = *ver;
     }
-  });
+  };
 }
 
 template <typename E>
@@ -1111,7 +1106,7 @@ void parse_symbol_version(Context<E> &ctx) {
   for (i64 i = 0; i < ctx.arg.version_definitions.size(); i++)
     verdefs[ctx.arg.version_definitions[i]] = i + VER_NDX_LAST_RESERVED + 1;
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file: ctx.objs) {
     for (i64 i = 0; i < file->symbols.size() - file->first_global; i++) {
       // Match VERSION part of symbol foo@VERSION with version definitions.
       // The symbols' VERSION parts are in file->symvers.
@@ -1151,7 +1146,7 @@ void parse_symbol_version(Context<E> &ctx) {
             (sym2->ver_idx & ~VERSYM_HIDDEN) == (sym->ver_idx & ~VERSYM_HIDDEN))
           sym2->ver_idx = VER_NDX_LOCAL;
     }
-  });
+  };
 }
 
 template <typename E>
@@ -1160,17 +1155,17 @@ void compute_import_export(Context<E> &ctx) {
 
   // Export symbols referenced by DSOs.
   if (!ctx.arg.shared) {
-    tbb::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
+    for(auto file: ctx.dsos) {
       for (Symbol<E> *sym : file->symbols) {
         if (sym->file && !sym->file->is_dso && sym->visibility != STV_HIDDEN) {
           std::scoped_lock lock(sym->mu);
           sym->is_exported = true;
         }
       }
-    });
+    };
   }
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (Symbol<E> *sym : file->get_global_syms()) {
       if (!sym->file || sym->visibility == STV_HIDDEN ||
           sym->ver_idx == VER_NDX_LOCAL)
@@ -1194,15 +1189,15 @@ void compute_import_export(Context<E> &ctx) {
           sym->is_imported = true;
       }
     }
-  });
+  };
 }
 
 template <typename E>
 void mark_addrsig(Context<E> &ctx) {
   Timer t(ctx, "mark_addrsig");
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->fill_addrsig(ctx);
-  });
+  };
 }
 
 template <typename E>
@@ -1629,13 +1624,13 @@ template <typename E>
 i64 compress_debug_sections(Context<E> &ctx) {
   Timer t(ctx, "compress_debug_sections");
 
-  tbb::parallel_for((i64)0, (i64)ctx.chunks.size(), [&](i64 i) {
+  for(i64 i=0; i<(i64)ctx.chunks.size(); i++) {
     Chunk<E> &chunk = *ctx.chunks[i];
 
     if ((chunk.shdr.sh_flags & SHF_ALLOC) || chunk.shdr.sh_size == 0 ||
         !chunk.name.starts_with(".debug"))
-      return;
-
+      continue;
+    
     Chunk<E> *comp = nullptr;
     if (ctx.arg.compress_debug_sections == COMPRESS_GABI)
       comp = new GabiCompressedSection<E>(ctx, chunk);
@@ -1645,7 +1640,7 @@ i64 compress_debug_sections(Context<E> &ctx) {
 
     ctx.output_chunks.emplace_back(comp);
     ctx.chunks[i] = comp;
-  });
+  };
 
   ctx.shstrtab->update_shdr(ctx);
 
