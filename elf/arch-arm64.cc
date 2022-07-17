@@ -1,8 +1,5 @@
 #include "mold.h"
 
-#include <tbb/parallel_for.h>
-#include <tbb/parallel_for_each.h>
-
 namespace mold::elf {
 
 using E = ARM64;
@@ -546,9 +543,9 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
   // Initialize input sections with a dummy offset so that we can
   // distinguish sections that have got an address with the one who
   // haven't.
-  tbb::parallel_for((i64)1, (i64)members.size(), [&](i64 i) {
+  for(i64 i =1; i<(i64)members.size(); i++) {
     members[i]->offset = -1;
-  });
+  };
 
   // We create thunks from the beginning of the section to the end.
   // We manage progress using four offsets which increase monotonically.
@@ -589,8 +586,8 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
     thunk.offset = offset;
 
     // Scan relocations between B and C to collect symbols that need thunks.
-    tbb::parallel_for_each(members.begin() + b, members.begin() + c,
-                           [&](InputSection<E> *isec) {
+    for(auto it = members.begin() + b; it< members.begin() + c; it++) {
+      InputSection<E>* isec = *it;
       std::span<const ElfRel<E>> rels = isec->get_rels(ctx);
       std::vector<RangeExtensionRef> &range_extn = isec->extra.range_extn;
       range_extn.resize(rels.size());
@@ -625,7 +622,7 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
           thunk.symbols.push_back(&sym);
         }
       }
-    });
+    };
 
     // Now that we know the number of symbols in the thunk, we can compute
     // its size.
@@ -644,8 +641,8 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
     }
 
     // Scan relocations again to fix symbol offsets in the last thunk.
-    tbb::parallel_for_each(members.begin() + b, members.begin() + c,
-                           [&](InputSection<E> *isec) {
+    for(auto it = members.begin() + b; it<members.begin() + c; it++){
+      InputSection<E> *isec = *it;
       std::span<const ElfRel<E>> rels = isec->get_rels(ctx);
 
       for (i64 i = 0; i < rels.size(); i++) {
@@ -655,7 +652,7 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
           range_extn[i].sym_idx = sym.extra.thunk_sym_idx;
         }
       }
-    });
+    };
 
     // Move B forward to point to the begining of the next group.
     b = c;
