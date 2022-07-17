@@ -4,9 +4,7 @@
 #include <cctype>
 #include <shared_mutex>
 #include <sys/mman.h>
-#include <tbb/parallel_for_each.h>
 #include <tbb/parallel_scan.h>
-#include <tbb/parallel_sort.h>
 
 namespace mold::elf {
 
@@ -407,7 +405,7 @@ void RelDynSection<E>::sort(Context<E> &ctx) {
   //
   // We group IFUNC relocations at the end of .rel.dyn because we need to
   // mark them with `__rel_iplt_start and `__rel_iplt_end`.
-  tbb::parallel_sort(begin, end, [&](const ElfRel<E> &a, const ElfRel<E> &b) {
+  std::sort(begin, end, [&](const ElfRel<E> &a, const ElfRel<E> &b) {
     return std::tuple(get_rank(a.r_type), a.r_sym, a.r_offset) <
            std::tuple(get_rank(b.r_type), b.r_sym, b.r_offset);
   });
@@ -569,13 +567,13 @@ void SymtabSection<E>::copy_buf(Context<E> &ctx) {
   }
 
   // Copy symbols and symbol names from input files
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->write_symtab(ctx);
-  });
+  };
 
-  tbb::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
+  for(auto file : ctx.dsos) {
     file->write_symtab(ctx);
-  });
+  };
 }
 
 template <typename E>
@@ -859,7 +857,7 @@ void OutputSection<E>::copy_buf(Context<E> &ctx) {
 
 template <typename E>
 void OutputSection<E>::write_to(Context<E> &ctx, u8 *buf) {
-  tbb::parallel_for((i64)0, (i64)members.size(), [&](i64 i) {
+  for(i64 i=0; i<(i64)members.size(); i++) {
     // Copy section contents to an output file
     InputSection<E> &isec = *members[i];
     isec.write_to(ctx, buf + isec.offset);
@@ -869,13 +867,12 @@ void OutputSection<E>::write_to(Context<E> &ctx, u8 *buf) {
     u64 next_start = (i == members.size() - 1) ?
       (u64)this->shdr.sh_size : members[i + 1]->offset;
     memset(buf + this_end, 0, next_start - this_end);
-  });
+  };
 
   if constexpr (std::is_same_v<E, ARM64>) {
-    tbb::parallel_for_each(thunks,
-                           [&](std::unique_ptr<RangeExtensionThunk<E>> &thunk) {
+    for(auto& thunk : thunks){
       thunk->copy_buf(ctx);
-    });
+    };
   }
 }
 
@@ -942,17 +939,17 @@ void OutputSection<E>::construct_relr(Context<E> &ctx) {
   // Collect base relocations
   std::vector<std::vector<typename E::WordTy>> shards(members.size());
 
-  tbb::parallel_for((i64)0, (i64)members.size(), [&](i64 i) {
+  for(i64 i=0; i<(i64)members.size(); i++) {
     InputSection<E> &isec = *members[i];
     if ((1 << isec.p2align) < E::word_size)
-      return;
+      continue;
 
     for (const ElfRel<E> &r : isec.get_rels(ctx))
       if (r.r_type == E::R_ABS && (r.r_offset % E::word_size) == 0)
         if (Symbol<E> &sym = *isec.file.symbols[r.r_sym];
             !sym.is_absolute() && !sym.is_imported)
           shards[i].push_back(isec.offset + r.r_offset);
-  });
+  };
 
   // Compress them
   std::vector<typename E::WordTy> pos = flatten(shards);
@@ -1233,19 +1230,19 @@ void DynsymSection<E>::finalize(Context<E> &ctx) {
     ctx.gnu_hash->num_buckets = num_buckets;
   }
 
-  tbb::parallel_for((i64)1, (i64)symbols.size(), [&](i64 i) {
+  for(i64 i=1; i<(i64)symbols.size(); i++) {
     Symbol<E> *sym = symbols[i];
     vec[i].sym = sym;
     if (ctx.gnu_hash && sym->is_exported)
       vec[i].hash = djb_hash(sym->name()) % num_buckets;
     vec[i].idx = i;
-  });
+  };
 
   auto is_local = [](Symbol<E> *sym) {
     return !sym->is_imported && !sym->is_exported;
   };
 
-  tbb::parallel_sort(vec.begin() + 1, vec.end(), [&](const T &a, const T &b) {
+  std::sort(vec.begin() + 1, vec.end(), [&](const T &a, const T &b) {
     return std::tuple(!is_local(a.sym), (bool)a.sym->is_exported, a.hash, a.idx) <
            std::tuple(!is_local(b.sym), (bool)b.sym->is_exported, b.hash, b.idx);
   });
@@ -1497,7 +1494,7 @@ void MergedSection<E>::assign_offsets(Context<E> &ctx) {
 
   i64 shard_size = map.nbuckets / map.NUM_SHARDS;
 
-  tbb::parallel_for((i64)0, map.NUM_SHARDS, [&](i64 i) {
+  for(i64 i=0; i<map.NUM_SHARDS; i++) {
     struct KeyVal {
       std::string_view key;
       SectionFragment<E> *val;
@@ -1511,7 +1508,7 @@ void MergedSection<E>::assign_offsets(Context<E> &ctx) {
         fragments.push_back({{map.keys[j], map.key_sizes[j]}, &frag});
 
     // Sort fragments to make output deterministic.
-    tbb::parallel_sort(fragments.begin(), fragments.end(),
+    std::sort(fragments.begin(), fragments.end(),
                        [](const KeyVal &a, const KeyVal &b) {
       return std::tuple{a.val->p2align.load(), a.key.size(), a.key} <
              std::tuple{b.val->p2align.load(), b.key.size(), b.key};
@@ -1534,7 +1531,7 @@ void MergedSection<E>::assign_offsets(Context<E> &ctx) {
 
     static Counter merged_strings("merged_strings");
     merged_strings += fragments.size();
-  });
+  };
 
   i64 p2align = 0;
   for (i64 x : max_p2aligns)
@@ -1544,11 +1541,11 @@ void MergedSection<E>::assign_offsets(Context<E> &ctx) {
     shard_offsets[i] =
       align_to(shard_offsets[i - 1] + sizes[i - 1], 1 << p2align);
 
-  tbb::parallel_for((i64)1, map.NUM_SHARDS, [&](i64 i) {
+  for(i64 i=1; i<map.NUM_SHARDS; i++) {
     for (i64 j = shard_size * i; j < shard_size * (i + 1); j++)
       if (SectionFragment<E> &frag = map.values[j]; frag.is_alive)
         frag.offset += shard_offsets[i];
-  });
+  };
 
   this->shdr.sh_size = shard_offsets[map.NUM_SHARDS];
   this->shdr.sh_addralign = 1 << p2align;
@@ -1563,13 +1560,13 @@ template <typename E>
 void MergedSection<E>::write_to(Context<E> &ctx, u8 *buf) {
   i64 shard_size = map.nbuckets / map.NUM_SHARDS;
 
-  tbb::parallel_for((i64)0, map.NUM_SHARDS, [&](i64 i) {
+  for(i64 i=0; i<map.NUM_SHARDS; i++) {
     memset(buf + shard_offsets[i], 0, shard_offsets[i + 1] - shard_offsets[i]);
 
     for (i64 j = shard_size * i; j < shard_size * (i + 1); j++)
       if (SectionFragment<E> &frag = map.values[j]; frag.is_alive)
         memcpy(buf + frag.offset, map.keys[j], map.key_sizes[j]);
-  });
+  };
 }
 
 template <typename E>
@@ -1590,7 +1587,7 @@ void EhFrameSection<E>::construct(Context<E> &ctx) {
 
   // Remove dead FDEs and assign them offsets within their corresponding
   // CIE group.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file: ctx.objs) {
     std::erase_if(file->fdes, [](FdeRecord<E> &fde) { return !fde.is_alive; });
 
     i64 offset = 0;
@@ -1599,7 +1596,7 @@ void EhFrameSection<E>::construct(Context<E> &ctx) {
       offset += fde.size(*file);
     }
     file->fde_size = offset;
-  });
+  };
 
   // Uniquify CIEs and assign offsets to them.
   std::vector<CieRecord<E> *> leaders;
@@ -1652,7 +1649,7 @@ void EhFrameSection<E>::copy_buf(Context<E> &ctx) {
     (HdrEntry *)(ctx.buf + ctx.eh_frame_hdr->shdr.sh_offset +
                  EhFrameHdrSection<E>::HEADER_SIZE);
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     // Copy CIEs.
     for (CieRecord<E> &cie : file->cies) {
       if (!cie.is_leader)
@@ -1704,13 +1701,13 @@ void EhFrameSection<E>::copy_buf(Context<E> &ctx) {
         }
       }
     }
-  });
+  };
 
   // Write a terminator.
   *(ul32 *)(base + this->shdr.sh_size - 4) = 0;
 
   // Sort .eh_frame_hdr contents.
-  tbb::parallel_sort(eh_hdr_begin, eh_hdr_begin + ctx.eh_frame_hdr->num_fdes,
+  std::sort(eh_hdr_begin, eh_hdr_begin + ctx.eh_frame_hdr->num_fdes,
                      [](const HdrEntry &a, const HdrEntry &b) {
     return a.init_addr < b.init_addr;
   });
@@ -1972,7 +1969,7 @@ static void compute_sha256(Context<E> &ctx, i64 offset) {
   i64 num_shards = align_to(filesize, shard_size) / shard_size;
   std::vector<u8> shards(num_shards * SHA256_SIZE);
 
-  tbb::parallel_for((i64)0, num_shards, [&](i64 i) {
+  for(i64 i=0; i<num_shards; i++) {
     u8 *begin = buf + shard_size * i;
     u8 *end = (i == num_shards - 1) ? buf + filesize : begin + shard_size;
     SHA256(begin, end - begin, shards.data() + i * SHA256_SIZE);
@@ -1983,7 +1980,7 @@ static void compute_sha256(Context<E> &ctx, i64 offset) {
     // hack, but we can save about 30 ms for a 2 GiB output.
     if (i > 0 && ctx.output_file->is_mmapped)
       munmap(begin, end - begin);
-  });
+  };
 
   assert(ctx.arg.build_id.size() <= SHA256_SIZE);
 
@@ -2128,7 +2125,7 @@ void GdbIndexSection<E>::construct(Context<E> &ctx) {
   std::atomic_bool has_debug_info = false;
 
   // Read debug sections
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     if (file->debug_info) {
       // Read compilation units from .debug_info.
       file->compunits = read_compunits(ctx, *file);
@@ -2137,7 +2134,7 @@ void GdbIndexSection<E>::construct(Context<E> &ctx) {
       file->num_areas = estimate_address_areas(ctx, *file);
       has_debug_info = true;
     }
-  });
+  };
 
   if (!has_debug_info)
     return;
@@ -2151,25 +2148,25 @@ void GdbIndexSection<E>::construct(Context<E> &ctx) {
   }
 
   // Read .debug_gnu_pubnames and .debug_gnu_pubtypes.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     file->gdb_names = read_pubnames(ctx, *file);
-  });
+  };
 
   // Estimate the unique number of pubnames.
   HyperLogLog estimator;
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     HyperLogLog e;
     for (GdbIndexName &name : file->gdb_names)
       e.insert(name.hash);
     estimator.merge(e);
-  });
+  };
 
   // Uniquify pubnames by inserting all name strings into a concurrent
   // hashmap.
   map.resize(estimator.get_cardinality() * 2);
   tbb::enumerable_thread_specific<i64> num_names;
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (GdbIndexName &name : file->gdb_names) {
       MapEntry *ent;
       bool inserted;
@@ -2184,10 +2181,10 @@ void GdbIndexSection<E>::construct(Context<E> &ctx) {
       ent->num_attrs++;
       name.entry_idx = ent - map.values;
     }
-  });
+  };
 
   // Assign offsets for names and attributes within each file.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (GdbIndexName &name : file->gdb_names) {
       MapEntry &ent = map.values[name.entry_idx];
       if (ent.owner == file) {
@@ -2197,7 +2194,7 @@ void GdbIndexSection<E>::construct(Context<E> &ctx) {
         file->names_size += name.name.size() + 1;
       }
     }
-  });
+  };
 
   // Compute per-file name and attributes offsets.
   for (i64 i = 0; i < ctx.objs.size() - 1; i++)
@@ -2290,7 +2287,7 @@ void GdbIndexSection<E>::copy_buf(Context<E> &ctx) {
   // Write CU vector
   memset(buf, 0, ctx.objs[0]->names_offset);
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     std::atomic_uint32_t *attrs = (std::atomic_uint32_t *)buf;
 
     for (GdbIndexName &name : file->gdb_names) {
@@ -2298,12 +2295,12 @@ void GdbIndexSection<E>::copy_buf(Context<E> &ctx) {
       u32 idx = (ent.owner.load()->attrs_offset + ent.attr_offset) / 4;
       attrs[idx + ++attrs[idx]] = name.attr;
     }
-  });
+  };
 
   // Sort CU vector for build reproducibility
   const i64 shard_size = map.nbuckets / map.NUM_SHARDS;
 
-  tbb::parallel_for((i64)0, (i64)map.NUM_SHARDS, [&](i64 i) {
+  for(i64 i=0; i<(i64)map.NUM_SHARDS; i++) {
     u32 *attrs = (u32 *)buf;
 
     for (i64 j = shard_size * i; j < shard_size * (i + 1); j++) {
@@ -2314,10 +2311,10 @@ void GdbIndexSection<E>::copy_buf(Context<E> &ctx) {
         std::sort(start, start + attrs[idx]);
       }
     }
-  });
+  };
 
   // Write pubnames and pubtypes.
-  tbb::parallel_for((i64)0, (i64)map.NUM_SHARDS, [&](i64 i) {
+  for(i64 i=0; i<(i64)map.NUM_SHARDS; i++) {
     for (i64 j = shard_size * i; j < shard_size * (i + 1); j++) {
       if (map.has_key(j)) {
         ObjectFile<E> &file = *map.values[j].owner;
@@ -2325,7 +2322,7 @@ void GdbIndexSection<E>::copy_buf(Context<E> &ctx) {
         write_string(buf + file.names_offset + map.values[j].name_offset, name);
       }
     }
-  });
+  };
 }
 
 template <typename E>
@@ -2361,9 +2358,9 @@ void GdbIndexSection<E>::write_address_areas(Context<E> &ctx) {
   };
 
   // Read address ranges from debug sections and copy them to .gdb_index.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     if (!file->debug_info)
-      return;
+      continue;
 
     Entry *begin = (Entry *)(base + header.areas_offset + file->area_offset);
     Entry *e = begin;
@@ -2403,7 +2400,7 @@ void GdbIndexSection<E>::write_address_areas(Context<E> &ctx) {
       e->end = filler;
       e->attr = file->compunits_idx;
     }
-  });
+  };
 }
 
 template <typename E>
@@ -2513,7 +2510,7 @@ static i64 get_output_sym_idx(Symbol<E> &sym) {
 
 template <typename E>
 void RelocSection<E>::copy_buf(Context<E> &ctx) {
-  tbb::parallel_for((i64)0, (i64)output_section.members.size(), [&](i64 i) {
+  for(i64 i=0; i<(i64)output_section.members.size();i++) {
     RelaTy *buf = (RelaTy *)(ctx.buf + this->shdr.sh_offset) + offsets[i];
 
     InputSection<E> &isec = *output_section.members[i];
@@ -2542,7 +2539,7 @@ void RelocSection<E>::copy_buf(Context<E> &ctx) {
         buf[j].r_addend = isec.get_addend(r);
       }
     }
-  });
+  };
 }
 
 #define INSTANTIATE(E)                                                  \
