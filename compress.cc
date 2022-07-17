@@ -14,7 +14,6 @@
 
 #include "mold.h"
 
-#include <tbb/parallel_for_each.h>
 #include <zlib.h>
 
 #define CHECK(fn) do { int r = (fn); assert(r == Z_OK); } while (0)
@@ -96,10 +95,10 @@ ZlibCompressor::ZlibCompressor(u8 *buf, i64 size) {
   shards.resize(inputs.size());
 
   // Compress each shard
-  tbb::parallel_for((i64)0, (i64)inputs.size(), [&](i64 i) {
+  for(i64 i=0; i< (i64)inputs.size(); i++) {
     adlers[i] = adler32(1, (u8 *)inputs[i].data(), inputs[i].size());
     shards[i] = do_compress(inputs[i]);
-  });
+  };
 
   // Combine checksums
   checksum = adlers[0];
@@ -125,9 +124,9 @@ void ZlibCompressor::write_to(u8 *buf) {
   for (i64 i = 1; i < shards.size(); i++)
     offsets[i] = offsets[i - 1] + shards[i - 1].size();
 
-  tbb::parallel_for((i64)0, (i64)shards.size(), [&](i64 i) {
+  for(i64 i=0; i < (i64)shards.size(); i++) {
     memcpy(&buf[offsets[i]], shards[i].data(), shards[i].size());
-  });
+  };
 
   // Write a trailer
   u8 *end = buf + size();
@@ -144,10 +143,10 @@ GzipCompressor::GzipCompressor(std::string_view input) {
   shards.resize(inputs.size());
 
   // Compress each shard
-  tbb::parallel_for((i64)0, (i64)inputs.size(), [&](i64 i) {
+  for(i64 i=0; i < (i64)shards.size(); i++) {
     crc[i] = crc32(0, (u8 *)inputs[i].data(), inputs[i].size());
     shards[i] = do_compress(inputs[i]);
-  });
+  };
 
   // Combine checksums
   checksum = crc[0];
@@ -178,9 +177,9 @@ void GzipCompressor::write_to(u8 *buf) {
   for (i64 i = 1; i < shards.size(); i++)
     offsets[i] = offsets[i - 1] + shards[i - 1].size();
 
-  tbb::parallel_for((i64)0, (i64)shards.size(), [&](i64 i) {
+  for(i64 i=0; i < (i64)shards.size(); i++) {
     memcpy(&buf[offsets[i]], shards[i].data(), shards[i].size());
-  });
+  };
 
   // Write a trailer
   u8 *end = buf + size();
