@@ -2,6 +2,7 @@
 #include "../sha.h"
 
 #include <cctype>
+#include <numeric>
 #include <shared_mutex>
 #include <sys/mman.h>
 #include <tbb/parallel_scan.h>
@@ -2476,18 +2477,12 @@ RelocSection<E>::RelocSection(Context<E> &ctx, OutputSection<E> &osec)
   // Compute an offset for each input section
   offsets.resize(osec.members.size());
 
-  auto scan = [&](const tbb::blocked_range<i64> &r, i64 sum, bool is_final) {
-    for (i64 i = r.begin(); i < r.end(); i++) {
-      InputSection<E> &isec = *osec.members[i];
-      if (is_final)
-        offsets[i] = sum;
-      sum += isec.get_rels(ctx).size();
+  i64 num_entries = 0;
+  for(i64 i=0; i<osec.members.size(); i++) {
+    InputSection<E> &isec = *osec.members[i];
+    offsets[i] = num_entries;
+    num_entries += isec.get_rels(ctx).size();
     }
-    return sum;
-  };
-
-  i64 num_entries = tbb::parallel_scan(
-    tbb::blocked_range<i64>(0, osec.members.size()), 0, scan, std::plus());
 
   this->shdr.sh_size = num_entries * sizeof(RelaTy);
 }
