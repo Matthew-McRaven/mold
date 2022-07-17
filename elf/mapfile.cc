@@ -3,15 +3,15 @@
 #include <fstream>
 #include <iomanip>
 #include <ios>
+#include <map>
 #include <sstream>
-#include <tbb/parallel_for_each.h>
 #include <unordered_map>
 
 namespace mold::elf {
 
 template <typename E>
 using Map =
-  tbb::concurrent_hash_map<InputSection<E> *, std::vector<Symbol<E> *>>;
+  std::map<InputSection<E> *, std::vector<Symbol<E> *>>;
 
 template <typename E>
 static std::unique_ptr<std::ofstream> open_output_file(Context<E> &ctx) {
@@ -26,29 +26,25 @@ template <typename E>
 static Map<E> get_map(Context<E> &ctx) {
   Map<E> map;
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file: ctx.objs) {
     for (Symbol<E> *sym : file->symbols) {
       if (sym->file != file || sym->get_type() == STT_SECTION)
         continue;
 
       if (InputSection<E> *isec = sym->get_input_section()) {
         assert(file == &isec->file);
-        typename Map<E>::accessor acc;
-        map.insert(acc, {isec, {}});
-        acc->second.push_back(sym);
+        map.insert({isec, {sym}});
       }
     }
-  });
+  };
 
   if (map.size() <= 1)
     return map;
 
-  tbb::parallel_for(map.range(), [](const typename Map<E>::range_type &range) {
-    for (auto it = range.begin(); it != range.end(); it++) {
-      std::vector<Symbol<E> *> &vec = it->second;
-      sort(vec, [](Symbol<E> *a, Symbol<E> *b) { return a->value < b->value; });
-    }
-  });
+  for(auto it: map) {
+    std::vector<Symbol<E> *> &vec = it.second;
+    sort(vec, [](Symbol<E> *a, Symbol<E> *b) { return a->value < b->value; });
+  }
   return map;
 }
 
@@ -81,7 +77,7 @@ void print_map(Context<E> &ctx) {
     std::span<InputSection<E> *> members = ((OutputSection<E> *)osec)->members;
     std::vector<std::string> bufs(members.size());
 
-    tbb::parallel_for((i64)0, (i64)members.size(), [&](i64 i) {
+    for(i64 i=0; i<(i64)members.size(); i++) {
       InputSection<E> *mem = members[i];
       std::ostringstream ss;
       opt_demangle = ctx.arg.demangle;
@@ -93,8 +89,7 @@ void print_map(Context<E> &ctx) {
          << std::setw(6) << (1 << (u64)mem->p2align)
          << "         " << *mem << "\n";
 
-      typename Map<E>::const_accessor acc;
-      if (map.find(acc, mem))
+      if (auto acc = map.find(mem); acc!=map.end())
         for (Symbol<E> *sym : acc->second)
           ss << std::showbase
              << std::setw(18) << std::hex << sym->get_addr(ctx) << std::dec
@@ -102,7 +97,7 @@ void print_map(Context<E> &ctx) {
              << *sym << "\n";
 
       bufs[i] = ss.str();
-    });
+    };
 
     for (std::string &str : bufs)
       *out << str;
