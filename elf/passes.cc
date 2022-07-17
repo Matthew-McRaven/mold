@@ -7,8 +7,6 @@
 #include <optional>
 #include <random>
 #include <regex>
-#include <tbb/parallel_for_each.h>
-#include <tbb/partitioner.h>
 #include <unordered_set>
 
 namespace mold::elf {
