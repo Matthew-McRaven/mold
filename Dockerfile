@@ -1,7 +1,7 @@
 # This dockerfile creates a reproducible build environment for mold.
 #
-# $ docker build -t rui314/mold-builder:v1-$(uname -m) .
-# $ docker push rui314/mold-builder:v1-$(uname -m)
+# $ docker build -t registry.gitlab.com/pep10/wip/pld/dev:v0.1.0 .
+# $ docker push registry.gitlab.com/pep10/wip/pld/dev:v0.1.0
 
 FROM ubuntu:22.04
 RUN apt install --no-install-recommends -y software-properties-common build-essential git \
