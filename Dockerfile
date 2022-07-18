@@ -4,7 +4,7 @@
 # $ docker push registry.gitlab.com/pep10/wip/pld/dev:v0.1.0
 
 FROM ubuntu:22.04
-RUN apt install --no-install-recommends -y software-properties-common build-essential git \
+RUN apt update && apt install --no-install-recommends -y software-properties-common build-essential git \
   wget cmake libstdc++-11-dev zlib1g-dev gpg gpg-agent qemu-user \
   gcc-i686-linux-gnu g++-i686-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
   gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf gcc-riscv64-linux-gnu g++-riscv64-linux-gnu \
