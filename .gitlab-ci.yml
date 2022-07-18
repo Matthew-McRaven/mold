@@ -26,14 +26,14 @@ test:i686:
   script:
     - make -j 4 test-arch TRIPLE=i686-linux-gnu MACHINE=i386
 
-test:i686:
+test:aarch64:
   script:
     - make -j 4 test-arch TRIPLE=aarch64-linux-gnu MACHINE=aarch64
 
-test:i686:
+test:arm32:
   script:
     - make -j 4 test-arch TRIPLE=arm-linux-gnueabihf MACHINE=arm
 
-test:i686:
+test:riscv64:
   script:
     - make -j 4 test-arch TRIPLE=riscv64-linux-gnu MACHINE=riscv64
