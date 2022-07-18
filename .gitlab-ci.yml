@@ -13,7 +13,7 @@ variables:
 .setup: &setup
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
-  image: registry.gitlab.com/pepsuite/wip/pld/dev:${BUILD_VERSION}
+  image: registry.gitlab.com/pep10/wip/pld/dev:${BUILD_VERSION}
   stage: test
   tags: 
     - docker
