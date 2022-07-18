@@ -1,0 +1,39 @@
+stages:
+
+- test
+
+# Variables that must be injected into every pipeline
+variables:
+  BUILD_VERSION: v0.1.0
+  GIT_LFS_SKIP_SMUDGE: '1'
+##################
+# Helper anchors #
+##################
+# A well-configured emscripten environment
+.setup:
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  image: registry.gitlab.com/pepsuite/wip/pld/dev:${BUILD_VERSION}
+  stage: test
+  tags: 
+    - docker
+
+test:x86_64:
+  script:
+    - make -j 4 test-arch TRIPLE=x86_64-linux-gnu MACHINE=x86_64
+
+test:i686:
+  script:
+    - make -j 4 test-arch TRIPLE=i686-linux-gnu MACHINE=i386
+
+test:i686:
+  script:
+    - make -j 4 test-arch TRIPLE=aarch64-linux-gnu MACHINE=aarch64
+
+test:i686:
+  script:
+    - make -j 4 test-arch TRIPLE=arm-linux-gnueabihf MACHINE=arm
+
+test:i686:
+  script:
+    - make -j 4 test-arch TRIPLE=riscv64-linux-gnu MACHINE=riscv64
