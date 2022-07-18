@@ -18,22 +18,22 @@ variables:
   tags: 
     - docker
 
-test:x86_64:
+test:x86_64: &setup
   script:
     - make -j 4 test-arch TRIPLE=x86_64-linux-gnu MACHINE=x86_64
 
-test:i686:
+test:i686: &setup
   script:
     - make -j 4 test-arch TRIPLE=i686-linux-gnu MACHINE=i386
 
-test:aarch64:
+test:aarch64: &setup
   script:
     - make -j 4 test-arch TRIPLE=aarch64-linux-gnu MACHINE=aarch64
 
-test:arm32:
+test:arm32: &setup
   script:
     - make -j 4 test-arch TRIPLE=arm-linux-gnueabihf MACHINE=arm
 
-test:riscv64:
+test:riscv64: &setup
   script:
     - make -j 4 test-arch TRIPLE=riscv64-linux-gnu MACHINE=riscv64
