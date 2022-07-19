@@ -48,6 +48,10 @@ public:
   static bool equal(const std::string_view &k1, const std::string_view &k2) {
     return k1 == k2;
   }
+
+  bool operator() (const std::string_view &k1, const std::string_view &k2) const{
+    return equal(k1, k2);
+  }
 };
 
 namespace mold {
