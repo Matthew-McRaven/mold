@@ -1,5 +1,5 @@
-#include "mold.h"
-#include "../sha.h"
+#include "elf/mold.h"
+#include "sha.h"
 
 #include <filesystem>
 #include <signal.h>
@@ -15,6 +15,7 @@ template <typename E>
 static std::string find_dso(Context<E> &ctx, std::filesystem::path self) {
   // Look for mold-wrapper.so from the same directory as the executable is.
   std::filesystem::path path = self.parent_path() / "mold-wrapper.so";
+  
   std::error_code ec;
   if (std::filesystem::is_regular_file(path, ec) && !ec)
     return path;

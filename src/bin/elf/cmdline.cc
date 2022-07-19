@@ -1,4 +1,4 @@
-#include "mold.h"
+#include "elf/mold.h"
 #include "../cmdline.h"
 
 #include <regex>

@@ -1,7 +1,7 @@
-#include "mold.h"
-#include "../archive-file.h"
+#include "elf/mold.h"
+#include "archive-file.h"
 #include "../cmdline.h"
-#include "../output-file.h"
+#include "output-file.h"
 
 #include <cstring>
 #include <functional>

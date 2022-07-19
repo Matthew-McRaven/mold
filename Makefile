@@ -143,7 +143,7 @@ $(TBB_LIB):
 	$(MAKE) -C out/tbb tbb
 	(cd out/tbb; ln -sf *_relwithdebinfo libs)
 
-test tests check: all
+test tests check: 
 	@$(MAKE) $(TESTS) --no-print-directory --output-sync
 
 	@if test -t 1; then \
@@ -162,7 +162,7 @@ test-arch:
 	QEMU="qemu-${MACHINE} -L /usr/${TRIPLE}" \
 	$(MAKE) test
 
-test-all: all
+test-all: 
 	$(MAKE) test-arch TRIPLE=x86_64-linux-gnu MACHINE=x86_64
 	$(MAKE) test-arch TRIPLE=i686-linux-gnu MACHINE=i386
 	$(MAKE) test-arch TRIPLE=aarch64-linux-gnu MACHINE=aarch64

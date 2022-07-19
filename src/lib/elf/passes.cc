@@ -9,6 +9,8 @@
 #include <regex>
 #include <unordered_set>
 
+#include "version.h"
+
 namespace mold::elf {
 
 template <typename E>
