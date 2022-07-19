@@ -1275,8 +1275,6 @@ void print_map(Context<E> &ctx);
 // subprocess.cc
 //
 
-std::function<void()> fork_child();
-
 template <typename E>
 [[noreturn]]
 void process_run_subcommand(Context<E> &ctx, int argc, char **argv);

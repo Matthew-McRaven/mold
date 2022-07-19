@@ -11,50 +11,6 @@
 
 namespace mold::elf {
 
-// Exiting from a program with large memory usage is slow --
-// it may take a few hundred milliseconds. To hide the latency,
-// we fork a child and let it do the actual linking work.
-std::function<void()> fork_child() {
-  int pipefd[2];
-  if (pipe(pipefd) == -1) {
-    perror("pipe");
-    exit(1);
-  }
-
-  pid_t pid = fork();
-  if (pid == -1) {
-    perror("fork");
-    exit(1);
-  }
-
-  if (pid > 0) {
-    // Parent
-    close(pipefd[1]);
-
-    char buf[1];
-    if (read(pipefd[0], buf, 1) == 1)
-      _exit(0);
-
-    int status;
-    waitpid(pid, &status, 0);
-
-    if (WIFEXITED(status))
-      _exit(WEXITSTATUS(status));
-    if (WIFSIGNALED(status))
-      raise(WTERMSIG(status));
-    _exit(1);
-  }
-
-  // Child
-  close(pipefd[0]);
-
-  return [=] {
-    char buf[] = {1};
-    int n = write(pipefd[1], buf, 1);
-    assert(n == 1);
-  };
-}
-
 template <typename E>
 static std::string find_dso(Context<E> &ctx, std::filesystem::path self) {
   // Look for mold-wrapper.so from the same directory as the executable is.

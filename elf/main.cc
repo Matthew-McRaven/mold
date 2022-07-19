@@ -408,10 +408,8 @@ static int elf_main(int argc, char **argv) {
   }
 
   // Fork a subprocess unless --no-fork is given.
-  std::function<void()> on_complete;
-  if (ctx.arg.fork)
-    on_complete = fork_child();
-
+  std::function<void()> on_complete = [](){};
+  
   tbb::global_control tbb_cont(tbb::global_control::max_allowed_parallelism,
                                ctx.arg.thread_count);
 
@@ -728,8 +726,6 @@ static int elf_main(int argc, char **argv) {
 
   std::cout << std::flush;
   std::cerr << std::flush;
-  if (on_complete)
-    on_complete();
 
   if (ctx.arg.quick_exit)
     _exit(0);
