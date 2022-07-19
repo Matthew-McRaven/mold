@@ -81,7 +81,7 @@ void PltSection<E>::copy_buf(Context<E> &ctx) {
   memcpy(buf, plt0, sizeof(plt0));
   *(ul32 *)(buf + 16) = ctx.gotplt->shdr.sh_addr - this->shdr.sh_addr - 16;
 
-  for (Symbol<E> *sym : symbols) {
+  for (auto sym : symbols) {
     static const u32 plt[] = {
       0xe59fc004, // 1: ldr ip, 2f
       0xe08cc00f, // add ip, ip, pc
@@ -99,7 +99,7 @@ template <>
 void PltGotSection<E>::copy_buf(Context<E> &ctx) {
   u8 *buf = ctx.buf + this->shdr.sh_offset;
 
-  for (Symbol<E> *sym : symbols) {
+  for (auto sym : symbols) {
     static const u32 plt[] = {
       0xe59fc004, // 1: ldr ip, 2f
       0xe08cc00f, // add ip, ip, pc
@@ -135,27 +135,27 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
     if (rel.r_type == R_ARM_NONE || rel.r_type == R_ARM_V4BX)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     u8 *loc = base + rel.r_offset;
 
     const SectionFragmentRef<E> *frag_ref = nullptr;
     if (rel_fragments && rel_fragments[frag_idx].idx == i)
       frag_ref = &rel_fragments[frag_idx++];
 
-#define S   (frag_ref ? frag_ref->frag->get_addr(ctx) : sym.get_addr(ctx))
+#define S   (frag_ref ? frag_ref->frag->get_addr(ctx) : sym->get_addr(ctx))
 #define A   (frag_ref ? frag_ref->addend : this->get_addend(rel))
 #define P   (output_section->shdr.sh_addr + offset + rel.r_offset)
-#define T   (sym.get_addr(ctx) & 1)
-#define G   (sym.get_got_addr(ctx) - ctx.got->shdr.sh_addr)
+#define T   (sym->get_addr(ctx) & 1)
+#define G   (sym->get_got_addr(ctx) - ctx.got->shdr.sh_addr)
 #define GOT ctx.got->shdr.sh_addr
 
     switch (rel.r_type) {
     case R_ARM_ABS32:
     case R_ARM_TARGET1:
-      if (sym.is_absolute() || !ctx.arg.pic) {
+      if (sym->is_absolute() || !ctx.arg.pic) {
         *(ul32 *)loc = S + A;
-      } else if (sym.is_imported) {
-        *dynrel++ = {P, R_ARM_ABS32, (u32)sym.get_dynsym_idx(ctx)};
+      } else if (sym->is_imported) {
+        *dynrel++ = {P, R_ARM_ABS32, (u32)sym->get_dynsym_idx(ctx)};
       } else {
         if (!is_relr_reloc(ctx, rel))
           *dynrel++ = {P, R_ARM_RELATIVE, 0};
@@ -169,7 +169,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       // THM_CALL relocation refers either BL or BLX instruction.
       // They are different in only one bit. We need to use BL if
       // the jump target is Thumb. Otherwise, use BLX.
-      if (sym.esym().is_undef_weak()) {
+      if (sym->esym().is_undef_weak()) {
         // On ARM, calling an weak undefined symbol jumps to the
         // next instruction.
         write_thm_b_imm(loc, 4);
@@ -198,7 +198,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
     case R_ARM_JUMP24: {
       u32 val;
 
-      if (sym.esym().is_undef_weak()) {
+      if (sym->esym().is_undef_weak()) {
         // On ARM, calling an weak undefined symbol jumps to the
         // next instruction.
         val = 4;
@@ -219,10 +219,10 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       if (T) {
         write_thm_b_imm(loc, S + A - P);
       } else {
-        assert(sym.extra.thumb_to_arm_thunk_idx != -1);
+        assert(sym->extra.thumb_to_arm_thunk_idx != -1);
         u64 thunk_addr =
           ctx.thumb_to_arm->shdr.sh_addr +
-          sym.extra.thumb_to_arm_thunk_idx * ThumbToArmSection::ENTRY_SIZE;
+          sym->extra.thumb_to_arm_thunk_idx * ThumbToArmSection::ENTRY_SIZE;
         write_thm_b_imm(loc, thunk_addr - P - 4);
       }
       continue;
@@ -256,7 +256,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       write_thm_mov_imm(loc, (S + A) >> 16);
       continue;
     case R_ARM_TLS_GD32:
-      *(ul32 *)loc = sym.get_tlsgd_addr(ctx) + A - P;
+      *(ul32 *)loc = sym->get_tlsgd_addr(ctx) + A - P;
       continue;
     case R_ARM_TLS_LDM32:
       *(ul32 *)loc = ctx.got->get_tlsld_addr(ctx) + A - P;
@@ -265,19 +265,19 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       *(ul32 *)loc = S + A - ctx.tls_begin;
       continue;
     case R_ARM_TLS_IE32:
-      *(ul32 *)loc = sym.get_gottp_addr(ctx) + A - P;
+      *(ul32 *)loc = sym->get_gottp_addr(ctx) + A - P;
       continue;
     case R_ARM_TLS_LE32:
       *(ul32 *)loc = S + A - ctx.tls_begin + 8;
       continue;
     case R_ARM_TLS_GOTDESC:
-      if (sym.get_tlsdesc_idx(ctx) == -1)
+      if (sym->get_tlsdesc_idx(ctx) == -1)
         *(ul32 *)loc = S - ctx.tls_begin + 8;
       else
-        *(ul32 *)loc = sym.get_tlsdesc_addr(ctx) + A - P - 6;
+        *(ul32 *)loc = sym->get_tlsdesc_addr(ctx) + A - P - 6;
       continue;
     case R_ARM_THM_TLS_CALL:
-      if (sym.get_tlsdesc_idx(ctx) == -1) {
+      if (sym->get_tlsdesc_idx(ctx) == -1) {
         // BL -> NOP
         *(ul32 *)loc = 0x8000f3af;
       } else {
@@ -308,10 +308,10 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
     if (rel.r_type == R_ARM_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     u8 *loc = base + rel.r_offset;
 
-    if (!sym.file) {
+    if (!sym->file) {
       record_undef_error(ctx, rel);
       continue;
     }
@@ -320,7 +320,7 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
     i64 addend;
     std::tie(frag, addend) = get_fragment(ctx, rel);
 
-#define S (frag ? frag->get_addr(ctx) : sym.get_addr(ctx))
+#define S (frag ? frag->get_addr(ctx) : sym->get_addr(ctx))
 #define A (frag ? addend : this->get_addend(rel))
 
     switch (rel.r_type) {
@@ -363,16 +363,16 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
     if (rel.r_type == R_ARM_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
 
-    if (!sym.file) {
+    if (!sym->file) {
       record_undef_error(ctx, rel);
       continue;
     }
 
-    if (sym.get_type() == STT_GNU_IFUNC) {
-      sym.flags |= NEEDS_GOT;
-      sym.flags |= NEEDS_PLT;
+    if (sym->get_type() == STT_GNU_IFUNC) {
+      sym->flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_PLT;
     }
 
     switch (rel.r_type) {
@@ -405,18 +405,18 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
     case R_ARM_GOT_PREL:
     case R_ARM_GOT_BREL:
     case R_ARM_TARGET2:
-      sym.flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_GOT;
       break;
     case R_ARM_CALL:
     case R_ARM_JUMP24:
-      if (sym.is_imported)
-        sym.flags |= NEEDS_PLT;
+      if (sym->is_imported)
+        sym->flags |= NEEDS_PLT;
       break;
     case R_ARM_THM_JUMP24:
-      if (sym.is_imported || sym.get_type() == STT_GNU_IFUNC)
-        sym.flags |= NEEDS_PLT | NEEDS_THUMB_TO_ARM_THUNK;
-      else if (sym.esym().st_value % 2 == 0)
-        sym.flags |= NEEDS_THUMB_TO_ARM_THUNK;
+      if (sym->is_imported || sym->get_type() == STT_GNU_IFUNC)
+        sym->flags |= NEEDS_PLT | NEEDS_THUMB_TO_ARM_THUNK;
+      else if (sym->esym().st_value % 2 == 0)
+        sym->flags |= NEEDS_THUMB_TO_ARM_THUNK;
       break;
     case R_ARM_MOVT_PREL:
     case R_ARM_THM_MOVT_PREL:
@@ -431,17 +431,17 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
       break;
     }
     case R_ARM_TLS_GD32:
-      sym.flags |= NEEDS_TLSGD;
+      sym->flags |= NEEDS_TLSGD;
       break;
     case R_ARM_TLS_LDM32:
       ctx.needs_tlsld = true;
       break;
     case R_ARM_TLS_IE32:
-      sym.flags |= NEEDS_GOTTP;
+      sym->flags |= NEEDS_GOTTP;
       break;
     case R_ARM_TLS_GOTDESC:
-      if (!ctx.relax_tlsdesc || sym.is_imported)
-        sym.flags |= NEEDS_TLSDESC;
+      if (!ctx.relax_tlsdesc || sym->is_imported)
+        sym->flags |= NEEDS_TLSDESC;
       break;
     case R_ARM_THM_JUMP11:
     case R_ARM_MOVW_PREL_NC:
@@ -468,7 +468,7 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
 // In order to support such branch, we insert a small piece of code to
 // the resulting executable which switches the processor mode from
 // Thumb to ARM. This section contains such code.
-void ThumbToArmSection::add_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void ThumbToArmSection::add_symbol(Context<E> &ctx, SymPtr<E> sym) {
   if (sym->extra.thumb_to_arm_thunk_idx == -1) {
     sym->extra.thumb_to_arm_thunk_idx = symbols.size();
     symbols.push_back(sym);
@@ -492,7 +492,7 @@ void ThumbToArmSection::copy_buf(Context<E> &ctx) {
 
   static_assert(sizeof(insn) == ENTRY_SIZE);
 
-  for (Symbol<E> *sym : symbols) {
+  for (SymPtr<E> sym : symbols) {
     memcpy(buf + offset, insn, sizeof(insn));
 
     u32 val = sym->get_addr(ctx) - this->shdr.sh_addr - offset - 12;

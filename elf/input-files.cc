@@ -48,7 +48,7 @@ ElfShdr<E> *InputFile<E>::find_section(i64 type) {
 
 template <typename E>
 void InputFile<E>::clear_symbols() {
-  for (Symbol<E> *sym : get_global_syms()) {
+  for (auto sym : get_global_syms()) {
     std::scoped_lock lock(sym->mu);
     if (sym->file == this) {
       sym->file = nullptr;
@@ -67,7 +67,7 @@ void InputFile<E>::clear_symbols() {
 template <typename E>
 std::string_view InputFile<E>::get_source_name() const {
   for (i64 i = 0; i < first_global; i++)
-    if (Symbol<E> *sym = symbols[i]; sym->get_type() == STT_FILE)
+    if (auto sym = symbols[i]; sym->get_type() == STT_FILE)
       return sym->name();
   return "";
 }
@@ -158,10 +158,15 @@ void ObjectFile<E>::initialize_sections(Context<E> &ctx) {
       if (entries[0] != GRP_COMDAT)
         Fatal(ctx) << *this << ": unsupported SHT_GROUP format";
 
-      typename decltype(ctx.comdat_groups)::const_accessor acc;
-      ctx.comdat_groups.insert(acc, {signature, ComdatGroup()});
-      ComdatGroup *group = const_cast<ComdatGroup *>(&acc->second);
+      typename decltype(ctx.comdat_groups)::accessor acc;
+      ctx.comdat_groups.insert(acc, {signature, std::make_shared<ComdatGroup>()});
+      auto group = acc->second;
       comdat_groups.push_back({group, entries.subspan(1)});
+
+      /*using pair_t = decltype(ctx.comdat_groups)::value_type;
+      auto group = std::make_shared<ComdatGroup>();
+      comdat_groups.push_back({group, entries.subspan(1)});
+      ctx.comdat_groups.insert(pair_t({signature, group}));*/
       break;
     }
     case SHT_SYMTAB_SHNDX:
@@ -405,14 +410,14 @@ void ObjectFile<E>::read_ehframe(Context<E> &ctx, InputSection<E> &isec) {
 // Returns a symbol object for a given key. This function handles
 // the -wrap option.
 template <typename E>
-static Symbol<E> *insert_symbol(Context<E> &ctx, const ElfSym<E> &esym,
+static SymPtr<E> insert_symbol(Context<E> &ctx, const ElfSym<E> &esym,
                                 std::string_view key, std::string_view name) {
   if (esym.is_undef() && name.starts_with("__real_") &&
       ctx.arg.wrap.count(name.substr(7))) {
     return get_symbol(ctx, key.substr(7), name.substr(7));
   }
 
-  Symbol<E> *sym = get_symbol(ctx, key, name);
+  auto sym = get_symbol(ctx, key, name);
 
   if (esym.is_undef() && sym->wrap) {
     key = save_string(ctx, "__wrap_" + std::string(key));
@@ -431,11 +436,12 @@ void ObjectFile<E>::initialize_symbols(Context<E> &ctx) {
   counter += this->elf_syms.size();
 
   // Initialize local symbols
-  this->local_syms.reset(new Symbol<E>[this->first_global]);
+  this->local_syms.clear();
+  this->local_syms.resize(this->first_global);
 
-  new (&this->local_syms[0]) Symbol<E>;
-  this->local_syms[0].file = this;
-  this->local_syms[0].sym_idx = 0;
+  this->local_syms[0] = std::make_shared<Symbol<E>>();
+  this->local_syms[0]->file = this;
+  this->local_syms[0]->sym_idx = 0;
 
   for (i64 i = 1; i < this->first_global; i++) {
     const ElfSym<E> &esym = this->elf_syms[i];
@@ -447,14 +453,13 @@ void ObjectFile<E>::initialize_symbols(Context<E> &ctx) {
       if (InputSection<E> *sec = get_section(esym))
         name = sec->name();
 
-    Symbol<E> &sym = this->local_syms[i];
-    new (&sym) Symbol<E>(name);
-    sym.file = this;
-    sym.value = esym.st_value;
-    sym.sym_idx = i;
+    auto sym = this->local_syms[i] = std::make_shared<Symbol<E>>(name);
+    sym->file = this;
+    sym->value = esym.st_value;
+    sym->sym_idx = i;
 
     if (!esym.is_abs())
-      sym.shndx = esym.is_abs() ? 0 : get_shndx(esym);
+      sym->shndx = esym.is_abs() ? 0 : get_shndx(esym);
   }
 
   this->symbols.resize(this->elf_syms.size());
@@ -464,7 +469,7 @@ void ObjectFile<E>::initialize_symbols(Context<E> &ctx) {
   symvers.resize(num_globals);
 
   for (i64 i = 0; i < this->first_global; i++)
-    this->symbols[i] = &this->local_syms[i];
+    this->symbols[i] = this->local_syms[i];
 
   // Initialize global symbols
   for (i64 i = this->first_global; i < this->elf_syms.size(); i++) {
@@ -757,9 +762,9 @@ void ObjectFile<E>::fill_addrsig(Context<E> &ctx) {
     u8 *end = cur + llvm_addrsig->contents.size();
 
     while (cur != end) {
-      Symbol<E> &sym = *this->symbols[read_uleb(cur)];
-      if (sym.file == this)
-        if (InputSection<E> *isec = sym.get_input_section())
+      auto sym = this->symbols[read_uleb(cur)];
+      if (sym->file == this)
+        if (InputSection<E> *isec = sym->get_input_section())
           isec->address_significant = true;
     }
   }
@@ -769,7 +774,7 @@ void ObjectFile<E>::fill_addrsig(Context<E> &ctx) {
   // 1. we have no address significance information for the symbol, or
   // 2. the symbol could be referenced from the outside in an address-
   //    significant manner.
-  for (Symbol<E> *sym : this->symbols)
+  for (auto sym : this->symbols)
     if (sym->file == this)
       if (InputSection<E> *isec = sym->get_input_section())
         if (!llvm_addrsig || sym->is_imported || sym->is_exported)
@@ -838,10 +843,10 @@ static u64 get_rank(InputFile<E> *file, const ElfSym<E> &esym, bool is_lazy) {
 }
 
 template <typename E>
-static u64 get_rank(const Symbol<E> &sym) {
-  if (!sym.file)
+static u64 get_rank(const SymPtr<E> sym) {
+  if (!sym->file)
     return 7 << 24;
-  return get_rank(sym.file, sym.esym(), !sym.file->is_alive);
+  return get_rank(sym->file, sym->esym(), !sym->file->is_alive);
 }
 
 // Symbol's visibility is set to the most restrictive one. For example,
@@ -850,7 +855,7 @@ static u64 get_rank(const Symbol<E> &sym) {
 // with the hidden visibility, the resulting symbol is a hidden defined
 // symbol.
 template <typename E>
-void ObjectFile<E>::merge_visibility(Context<E> &ctx, Symbol<E> &sym,
+void ObjectFile<E>::merge_visibility(Context<E> &ctx, SymPtr<E> sym,
                                      u8 visibility) {
   // Canonicalize visibility
   if (visibility == STV_INTERNAL)
@@ -868,14 +873,14 @@ void ObjectFile<E>::merge_visibility(Context<E> &ctx, Symbol<E> &sym,
     Fatal(ctx) << *this << ": unknown symbol visibility: " << sym;
   };
 
-  update_minimum(sym.visibility, visibility, [&](u8 a, u8 b) {
+  update_minimum(sym->visibility, visibility, [&](u8 a, u8 b) {
     return priority(a) < priority(b);
   });
 }
 
 template <typename E>
 static void print_trace_symbol(Context<E> &ctx, InputFile<E> &file,
-                               const ElfSym<E> &esym, Symbol<E> &sym) {
+                               const ElfSym<E> &esym, SymPtr<E> sym) {
   if (esym.is_defined())
     SyncOut(ctx) << "trace-symbol: " << file << ": definition of " << sym;
   else if (esym.is_weak())
@@ -887,7 +892,7 @@ static void print_trace_symbol(Context<E> &ctx, InputFile<E> &file,
 template <typename E>
 void ObjectFile<E>::resolve_symbols(Context<E> &ctx) {
   for (i64 i = this->first_global; i < this->symbols.size(); i++) {
-    Symbol<E> &sym = *this->symbols[i];
+    auto sym = this->symbols[i];
     const ElfSym<E> &esym = this->elf_syms[i];
 
     if (esym.is_undef())
@@ -900,16 +905,16 @@ void ObjectFile<E>::resolve_symbols(Context<E> &ctx) {
         continue;
     }
 
-    std::scoped_lock lock(sym.mu);
+    std::scoped_lock lock(sym->mu);
     if (get_rank(this, esym, !this->is_alive) < get_rank(sym)) {
-      sym.file = this;
-      sym.shndx = isec ? isec->shndx : 0;
-      sym.value = esym.st_value;
-      sym.sym_idx = i;
-      sym.ver_idx = ctx.default_version;
-      sym.is_weak = esym.is_weak();
-      sym.is_imported = false;
-      sym.is_exported = false;
+      sym->file = this;
+      sym->shndx = isec ? isec->shndx : 0;
+      sym->value = esym.st_value;
+      sym->sym_idx = i;
+      sym->ver_idx = ctx.default_version;
+      sym->is_weak = esym.is_weak();
+      sym->is_imported = false;
+      sym->is_exported = false;
     }
   }
 }
@@ -922,29 +927,29 @@ ObjectFile<E>::mark_live_objects(Context<E> &ctx,
 
   for (i64 i = this->first_global; i < this->symbols.size(); i++) {
     const ElfSym<E> &esym = this->elf_syms[i];
-    Symbol<E> &sym = *this->symbols[i];
+    auto sym = this->symbols[i];
 
     if (esym.is_defined() && exclude_libs)
       merge_visibility(ctx, sym, STV_HIDDEN);
     else
       merge_visibility(ctx, sym, esym.st_visibility);
 
-    if (sym.traced)
+    if (sym->traced)
       print_trace_symbol(ctx, *this, esym, sym);
 
     if (esym.is_weak())
       continue;
 
-    std::scoped_lock lock(sym.mu);
-    if (!sym.file)
+    std::scoped_lock lock(sym->mu);
+    if (!sym->file)
       continue;
 
-    bool keep = esym.is_undef() || (esym.is_common() && !sym.esym().is_common());
-    if (keep && !sym.file->is_alive.exchange(true)) {
-      feeder(sym.file);
+    bool keep = esym.is_undef() || (esym.is_common() && !sym->esym().is_common());
+    if (keep && !sym->file->is_alive.exchange(true)) {
+      feeder(sym->file);
 
-      if (sym.traced)
-        SyncOut(ctx) << "trace-symbol: " << *this << " keeps " << *sym.file
+      if (sym->traced)
+        SyncOut(ctx) << "trace-symbol: " << *this << " keeps " << sym->file
                      << " for " << sym;
     }
   }
@@ -963,7 +968,7 @@ ObjectFile<E>::mark_live_objects(Context<E> &ctx,
 template <typename E>
 void ObjectFile<E>::resolve_comdat_groups() {
   for (auto &pair : comdat_groups) {
-    ComdatGroup *group = pair.first;
+    auto group = pair.first;
     update_minimum(group->owner, this->priority);
   }
 }
@@ -971,7 +976,7 @@ void ObjectFile<E>::resolve_comdat_groups() {
 template <typename E>
 void ObjectFile<E>::eliminate_duplicate_comdat_groups() {
   for (auto &pair : comdat_groups) {
-    ComdatGroup *group = pair.first;
+    auto group = pair.first;
     if (group->owner == this->priority)
       continue;
 
@@ -987,43 +992,45 @@ void ObjectFile<E>::claim_unresolved_symbols(Context<E> &ctx) {
   if (!this->is_alive)
     return;
 
-  auto report_undef = [&](Symbol<E> &sym) {
+  auto report_undef = [&](SymPtr<E> sym) {
     std::stringstream ss;
     if (std::string_view source = this->get_source_name(); !source.empty())
       ss << ">>> referenced by " << source << "\n";
     else
       ss << ">>> referenced by " << *this << "\n";
 
+    //using pair_t = decltype(ctx.undef_errors)::value_type;
+    //ctx.undef_errors.insert(pair_t({sym->name(), {ss.str()}}));
     typename decltype(ctx.undef_errors)::accessor acc;
-    ctx.undef_errors.insert(acc, {sym.name(), {}});
+    ctx.undef_errors.insert(acc, {sym->name(), {}});
     acc->second.push_back(ss.str());
   };
 
   for (i64 i = this->first_global; i < this->symbols.size(); i++) {
     const ElfSym<E> &esym = this->elf_syms[i];
-    Symbol<E> &sym = *this->symbols[i];
+    auto sym = this->symbols[i];
     if (!esym.is_undef())
       continue;
 
-    std::scoped_lock lock(sym.mu);
+    std::scoped_lock lock(sym->mu);
 
     // If a protected/hidden undefined symbol is resolved to an
     // imported symbol, it's handled as if no symbols were found.
-    if (sym.file && sym.file->is_dso &&
-        (sym.visibility == STV_PROTECTED || sym.visibility == STV_HIDDEN)) {
+    if (sym->file && sym->file->is_dso &&
+        (sym->visibility == STV_PROTECTED || sym->visibility == STV_HIDDEN)) {
       report_undef(sym);
       continue;
     }
 
-    if (sym.file &&
-        (!sym.esym().is_undef() || sym.file->priority <= this->priority))
+    if (sym->file &&
+        (!sym->esym().is_undef() || sym->file->priority <= this->priority))
       continue;
 
     // If a symbol name is in the form of "foo@version", search for
     // symbol "foo" and check if the symbol has version "version".
     std::string_view key = this->symbol_strtab.data() + esym.st_name;
     if (i64 pos = key.find('@'); pos != key.npos) {
-      Symbol<E> *sym2 = get_symbol(ctx, key.substr(0, pos));
+      auto sym2 = get_symbol(ctx, key.substr(0, pos));
       if (sym2->file && sym2->file->is_dso &&
           sym2->get_version() == key.substr(pos + 1)) {
         this->symbols[i] = sym2;
@@ -1032,12 +1039,12 @@ void ObjectFile<E>::claim_unresolved_symbols(Context<E> &ctx) {
     }
 
     auto claim = [&] {
-      sym.file = this;
-      sym.shndx = 0;
-      sym.value = 0;
-      sym.sym_idx = i;
-      sym.is_weak = false;
-      sym.is_exported = false;
+      sym->file = this;
+      sym->shndx = 0;
+      sym->value = 0;
+      sym->sym_idx = i;
+      sym->is_weak = false;
+      sym->is_exported = false;
     };
 
     if (ctx.arg.unresolved_symbols == UNRESOLVED_WARN)
@@ -1058,10 +1065,10 @@ void ObjectFile<E>::claim_unresolved_symbols(Context<E> &ctx) {
       if (!ctx.arg.z_defs || esym.is_undef_weak() ||
           ctx.arg.unresolved_symbols != UNRESOLVED_ERROR) {
         claim();
-        sym.ver_idx = 0;
-        sym.is_imported = true;
+        sym->ver_idx = 0;
+        sym->is_imported = true;
 
-        if (sym.traced)
+        if (sym->traced)
           SyncOut(ctx) << "trace-symbol: " << *this << ": unresolved"
                        << (esym.is_weak() ? " weak" : "")
                        << " symbol " << sym;
@@ -1073,8 +1080,8 @@ void ObjectFile<E>::claim_unresolved_symbols(Context<E> &ctx) {
     if (ctx.arg.unresolved_symbols != UNRESOLVED_ERROR ||
         ctx.arg.noinhibit_exec || esym.is_undef_weak()) {
       claim();
-      sym.ver_idx = ctx.default_version;
-      sym.is_imported = false;
+      sym->ver_idx = ctx.default_version;
+      sym->is_imported = false;
     }
   }
 }
@@ -1089,14 +1096,14 @@ void ObjectFile<E>::scan_relocations(Context<E> &ctx) {
   // Scan relocations against exception frames
   for (CieRecord<E> &cie : cies) {
     for (ElfRel<E> &rel : cie.get_rels()) {
-      Symbol<E> &sym = *this->symbols[rel.r_sym];
+      auto sym = this->symbols[rel.r_sym];
 
-      if (sym.is_imported) {
-        if (sym.get_type() != STT_FUNC)
+      if (sym->is_imported) {
+        if (sym->get_type() != STT_FUNC)
           Fatal(ctx) << *this << ": " << sym
                   << ": .eh_frame CIE record with an external data reference"
                   << " is not supported";
-        sym.flags |= NEEDS_PLT;
+        sym->flags |= NEEDS_PLT;
       }
     }
   }
@@ -1137,10 +1144,10 @@ void ObjectFile<E>::convert_common_symbols(Context<E> &ctx) {
     if (!this->elf_syms[i].is_common())
       continue;
 
-    Symbol<E> &sym = *this->symbols[i];
-    std::scoped_lock lock(sym.mu);
+    auto sym = this->symbols[i];
+    std::scoped_lock lock(sym->mu);
 
-    if (sym.file != this) {
+    if (sym->file != this) {
       if (ctx.arg.warn_common)
         Warn(ctx) << *this << ": multiple common symbols: " << sym;
       continue;
@@ -1150,7 +1157,7 @@ void ObjectFile<E>::convert_common_symbols(Context<E> &ctx) {
     ElfShdr<E> &shdr = elf_sections2.back();
     memset(&shdr, 0, sizeof(shdr));
 
-    bool is_tls = (sym.get_type() == STT_TLS);
+    bool is_tls = (sym->get_type() == STT_TLS);
     shdr.sh_flags = is_tls ? (SHF_ALLOC | SHF_TLS) : SHF_ALLOC;
     shdr.sh_type = SHT_NOBITS;
     shdr.sh_size = this->elf_syms[i].st_size;
@@ -1163,22 +1170,22 @@ void ObjectFile<E>::convert_common_symbols(Context<E> &ctx) {
                                         idx);
     isec->output_section = is_tls ? tls_common : common;
 
-    sym.file = this;
-    sym.shndx = idx;
-    sym.value = 0;
-    sym.sym_idx = i;
-    sym.ver_idx = ctx.default_version;
-    sym.is_weak = false;
-    sym.is_imported = false;
-    sym.is_exported = false;
+    sym->file = this;
+    sym->shndx = idx;
+    sym->value = 0;
+    sym->sym_idx = i;
+    sym->ver_idx = ctx.default_version;
+    sym->is_weak = false;
+    sym->is_imported = false;
+    sym->is_exported = false;
 
     sections.push_back(std::move(isec));
   }
 }
 
 template <typename E>
-static bool should_write_to_local_symtab(Context<E> &ctx, Symbol<E> &sym) {
-  if (sym.get_type() == STT_SECTION)
+static bool should_write_to_local_symtab(Context<E> &ctx, SymPtr<E> sym) {
+  if (sym->get_type() == STT_SECTION)
     return false;
 
   // Local symbols are discarded if --discard-local is given or they
@@ -1187,11 +1194,11 @@ static bool should_write_to_local_symtab(Context<E> &ctx, Symbol<E> &sym) {
   // merged, so their origins shouldn't matter, but I dont' really
   // know the rationale. Anyway, this is the behavior of the
   // traditional linkers.
-  if (sym.name().starts_with(".L")) {
+  if (sym->name().starts_with(".L")) {
     if (ctx.arg.discard_locals)
       return false;
 
-    if (InputSection<E> *isec = sym.get_input_section())
+    if (InputSection<E> *isec = sym->get_input_section())
       if (isec->shdr().sh_flags & SHF_MERGE)
         return false;
   }
@@ -1204,13 +1211,13 @@ void ObjectFile<E>::compute_symtab(Context<E> &ctx) {
   if (ctx.arg.strip_all)
     return;
 
-  auto is_alive = [&](Symbol<E> &sym) -> bool {
+  auto is_alive = [&](SymPtr<E> sym) -> bool {
     if (!ctx.arg.gc_sections)
       return true;
 
-    if (SectionFragment<E> *frag = sym.get_frag())
+    if (SectionFragment<E> *frag = sym->get_frag())
       return frag->is_alive;
-    if (InputSection<E> *isec = sym.get_input_section())
+    if (InputSection<E> *isec = sym->get_input_section())
       return isec->is_alive;
     return true;
   };
@@ -1218,25 +1225,25 @@ void ObjectFile<E>::compute_symtab(Context<E> &ctx) {
   // Compute the size of local symbols
   if (!ctx.arg.discard_all && !ctx.arg.strip_all && !ctx.arg.retain_symbols_file) {
     for (i64 i = 1; i < this->first_global; i++) {
-      Symbol<E> &sym = *this->symbols[i];
+      auto sym = this->symbols[i];
 
       if (is_alive(sym) && should_write_to_local_symtab(ctx, sym)) {
-        this->strtab_size += sym.name().size() + 1;
+        this->strtab_size += sym->name().size() + 1;
         this->num_local_symtab++;
-        sym.write_to_symtab = true;
+        sym->write_to_symtab = true;
       }
     }
   }
 
   // Compute the size of global symbols.
   for (i64 i = this->first_global; i < this->symbols.size(); i++) {
-    Symbol<E> &sym = *this->symbols[i];
+    auto sym = this->symbols[i];
 
-    if (sym.file == this && is_alive(sym) &&
-        (!ctx.arg.retain_symbols_file || sym.write_to_symtab)) {
-      this->strtab_size += sym.name().size() + 1;
+    if (sym->file == this && is_alive(sym) &&
+        (!ctx.arg.retain_symbols_file || sym->write_to_symtab)) {
+      this->strtab_size += sym->name().size() + 1;
       this->num_global_symtab++;
-      sym.write_to_symtab = true;
+      sym->write_to_symtab = true;
     }
   }
 }
@@ -1249,41 +1256,41 @@ void ObjectFile<E>::write_symtab(Context<E> &ctx) {
   u8 *strtab_base = ctx.buf + ctx.strtab->shdr.sh_offset;
   i64 strtab_off = this->strtab_offset;
 
-  auto write_sym = [&](Symbol<E> &sym) {
+  auto write_sym = [&](SymPtr<E> sym) {
     ElfSym<E> &esym = symtab_base[symtab_idx++];
 
-    esym = sym.esym();
+    esym = sym->esym();
     esym.st_name = strtab_off;
 
-    if (sym.get_type() == STT_TLS)
-      esym.st_value = sym.get_addr(ctx, false) - ctx.tls_begin;
+    if (sym->get_type() == STT_TLS)
+      esym.st_value = sym->get_addr(ctx, false) - ctx.tls_begin;
     else
-      esym.st_value = sym.get_addr(ctx, false);
+      esym.st_value = sym->get_addr(ctx, false);
 
-    if (InputSection<E> *isec = sym.get_input_section())
+    if (InputSection<E> *isec = sym->get_input_section())
       esym.st_shndx = isec->output_section->shndx;
-    else if (sym.shndx < 0)
-      esym.st_shndx = -sym.shndx;
+    else if (sym->shndx < 0)
+      esym.st_shndx = -sym->shndx;
     else if (esym.is_undef())
       esym.st_shndx = SHN_UNDEF;
     else
       esym.st_shndx = SHN_ABS;
 
-    write_string(strtab_base + strtab_off, sym.name());
-    strtab_off += sym.name().size() + 1;
+    write_string(strtab_base + strtab_off, sym->name());
+    strtab_off += sym->name().size() + 1;
   };
 
   symtab_idx = this->local_symtab_idx;
   for (i64 i = 1; i < this->first_global; i++) {
-    Symbol<E> &sym = *this->symbols[i];
-    if (sym.write_to_symtab)
+    auto sym = this->symbols[i];
+    if (sym->write_to_symtab)
       write_sym(sym);
   }
 
   symtab_idx = this->global_symtab_idx;
   for (i64 i = this->first_global; i < this->elf_syms.size(); i++) {
-    Symbol<E> &sym = *this->symbols[i];
-    if (sym.file == this && sym.write_to_symtab)
+    auto sym = this->symbols[i];
+    if (sym->file == this && sym->write_to_symtab)
       write_sym(sym);
   }
 }
@@ -1416,22 +1423,22 @@ std::vector<std::string_view> SharedFile<E>::read_verdef(Context<E> &ctx) {
 template <typename E>
 void SharedFile<E>::resolve_symbols(Context<E> &ctx) {
   for (i64 i = 0; i < this->symbols.size(); i++) {
-    Symbol<E> &sym = *this->symbols[i];
+    auto sym = this->symbols[i];
     const ElfSym<E> &esym = this->elf_syms[i];
     if (esym.is_undef())
       continue;
 
-    std::scoped_lock lock(sym.mu);
+    std::scoped_lock lock(sym->mu);
 
     if (get_rank(this, esym, false) < get_rank(sym)) {
-      sym.file = this;
-      sym.shndx = 0;
-      sym.value = esym.st_value;
-      sym.sym_idx = i;
-      sym.ver_idx = versyms[i];
-      sym.is_weak = false;
-      sym.is_imported = false;
-      sym.is_exported = false;
+      sym->file = this;
+      sym->shndx = 0;
+      sym->value = esym.st_value;
+      sym->sym_idx = i;
+      sym->ver_idx = versyms[i];
+      sym->is_weak = false;
+      sym->is_imported = false;
+      sym->is_exported = false;
     }
   }
 }
@@ -1442,27 +1449,27 @@ SharedFile<E>::mark_live_objects(Context<E> &ctx,
                                  std::function<void(InputFile<E> *)> feeder) {
   for (i64 i = 0; i < this->elf_syms.size(); i++) {
     const ElfSym<E> &esym = this->elf_syms[i];
-    Symbol<E> &sym = *this->symbols[i];
+    auto sym =this->symbols[i];
 
-    if (sym.traced)
+    if (sym->traced)
       print_trace_symbol(ctx, *this, esym, sym);
 
-    if (esym.is_undef() && sym.file && sym.file != this &&
-        !sym.file->is_alive.exchange(true)) {
-      feeder(sym.file);
+    if (esym.is_undef() && sym->file && sym->file != this &&
+        !sym->file->is_alive.exchange(true)) {
+      feeder(sym->file);
 
-      if (sym.traced)
-        SyncOut(ctx) << "trace-symbol: " << *this << " keeps " << *sym.file
+      if (sym->traced)
+        SyncOut(ctx) << "trace-symbol: " << *this << " keeps " << sym->file
                      << " for " << sym;
     }
   }
 }
 
 template <typename E>
-std::vector<Symbol<E> *> SharedFile<E>::find_aliases(Symbol<E> *sym) {
+std::vector<SymPtr<E>> SharedFile<E>::find_aliases(SymPtr<E> sym) {
   assert(sym->file == this);
-  std::vector<Symbol<E> *> vec;
-  for (Symbol<E> *sym2 : this->symbols)
+  std::vector<SymPtr<E>> vec;
+  for (auto sym2 : this->symbols)
     if (sym2->file == this && sym != sym2 &&
         sym->esym().st_value == sym2->esym().st_value)
       vec.push_back(sym2);
@@ -1470,7 +1477,7 @@ std::vector<Symbol<E> *> SharedFile<E>::find_aliases(Symbol<E> *sym) {
 }
 
 template <typename E>
-bool SharedFile<E>::is_readonly(Context<E> &ctx, Symbol<E> *sym) {
+bool SharedFile<E>::is_readonly(Context<E> &ctx, SymPtr<E> sym) {
   ElfPhdr<E> *phdr = this->get_phdr();
   u64 val = sym->esym().st_value;
 
@@ -1488,13 +1495,13 @@ void SharedFile<E>::compute_symtab(Context<E> &ctx) {
 
   // Compute the size of global symbols.
   for (i64 i = this->first_global; i < this->symbols.size(); i++) {
-    Symbol<E> &sym = *this->symbols[i];
+    auto sym = this->symbols[i];
 
-    if (sym.file == this && (sym.is_imported || sym.is_exported) &&
-        (!ctx.arg.retain_symbols_file || sym.write_to_symtab)) {
-      this->strtab_size += sym.name().size() + 1;
+    if (sym->file == this && (sym->is_imported || sym->is_exported) &&
+        (!ctx.arg.retain_symbols_file || sym->write_to_symtab)) {
+      this->strtab_size += sym->name().size() + 1;
       this->num_global_symtab++;
-      sym.write_to_symtab = true;
+      sym->write_to_symtab = true;
     }
   }
 }
@@ -1507,8 +1514,8 @@ void SharedFile<E>::write_symtab(Context<E> &ctx) {
   u8 *strtab = ctx.buf + ctx.strtab->shdr.sh_offset + this->strtab_offset;
 
   for (i64 i = this->first_global; i < this->elf_syms.size(); i++) {
-    Symbol<E> &sym = *this->symbols[i];
-    if (sym.file != this || !sym.write_to_symtab)
+    auto sym = this->symbols[i];
+    if (sym->file != this || !sym->write_to_symtab)
       continue;
 
     ElfSym<E> &esym = *symtab++;
@@ -1517,11 +1524,11 @@ void SharedFile<E>::write_symtab(Context<E> &ctx) {
     esym.st_size = 0;
     esym.st_type = STT_NOTYPE;
     esym.st_bind = STB_GLOBAL;
-    esym.st_visibility = sym.visibility;
+    esym.st_visibility = sym->visibility;
     esym.st_shndx = SHN_UNDEF;
 
-    write_string(strtab, sym.name());
-    strtab += sym.name().size() + 1;
+    write_string(strtab, sym->name());
+    strtab += sym->name().size() + 1;
   }
 }
 

@@ -593,7 +593,7 @@ ObjectFile<E> *read_lto_object(Context<E> &ctx, MappedFile<Context<E>> *mf) {
   ctx.obj_pool.emplace_back(obj);
 
   obj->filename = mf->name;
-  obj->symbols.push_back(new Symbol<E>);
+  obj->symbols.push_back(std::make_shared<Symbol<E>>());
   obj->first_global = 1;
   obj->is_lto_obj = true;
   obj->mf = mf;
@@ -668,7 +668,6 @@ std::vector<ObjectFile<E> *> do_lto(Context<E> &ctx) {
 
       if (sym.file && !sym.file->is_dso &&
           ((ObjectFile<E> *)sym.file)->is_lto_obj) {
-        std::scoped_lock lock(sym.mu);
         sym.referenced_by_regular_obj = true;
       }
     }

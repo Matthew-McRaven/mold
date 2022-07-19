@@ -354,7 +354,7 @@ ObjectFile<E> *create_internal_file(Context<E> &ctx) {
 
   // Create linker-synthesized symbols.
   auto *esyms = new std::vector<ElfSym<E>>(1);
-  obj->symbols.push_back(new Symbol<E>);
+  obj->symbols.push_back(std::make_shared<Symbol<E>>());
   obj->first_global = 1;
   obj->is_alive = true;
   obj->features = -1;
@@ -369,7 +369,7 @@ ObjectFile<E> *create_internal_file(Context<E> &ctx) {
     esym.st_visibility = STV_HIDDEN;
     esyms->push_back(esym);
 
-    Symbol<E> *sym = get_symbol(ctx, name);
+    auto sym = get_symbol(ctx, name);
     obj->symbols.push_back(sym);
     return sym;
   };
@@ -428,7 +428,7 @@ ObjectFile<E> *create_internal_file(Context<E> &ctx) {
   i64 first_defsym = obj->symbols.size();
 
   for (i64 i = 0; i < ctx.arg.defsyms.size(); i++) {
-    Symbol<E> *sym = ctx.arg.defsyms[i].first;
+    auto sym = ctx.arg.defsyms[i].first;
     ElfSym<E> esym;
     memset(&esym, 0, sizeof(esym));
     esym.st_type = STT_NOTYPE;
@@ -451,17 +451,16 @@ ObjectFile<E> *create_internal_file(Context<E> &ctx) {
     obj->symbols[i]->shndx = -1; // dummy value to make it a relative symbol
 
   for (i64 i = 0; i < ctx.arg.defsyms.size(); i++) {
-    Symbol<E> *sym = ctx.arg.defsyms[i].first;
-    std::variant<Symbol<E> *, u64> val = ctx.arg.defsyms[i].second;
+    auto sym = ctx.arg.defsyms[i].first;
+    std::variant<SymPtr<E>, u64> val = ctx.arg.defsyms[i].second;
 
-    if (Symbol<E> **sym2 = std::get_if<Symbol<E> *>(&val))
+    if (SymPtr<E> *sym2 = std::get_if<SymPtr<E>>(&val))
       if ((*sym2)->is_relative())
         sym->shndx = -1; // dummy value to make it a relative symbol
   }
 
   ctx.on_exit.push_back([=] {
     delete esyms;
-    delete obj->symbols[0];
   });
 
   return obj;
@@ -885,19 +884,19 @@ void scan_rels(Context<E> &ctx) {
   append(files, ctx.objs);
   append(files, ctx.dsos);
 
-  std::vector<std::vector<Symbol<E> *>> vec(files.size());
+  std::vector<std::vector<SymPtr<E>>> vec(files.size());
 
   for(i64 i=0; i<(i64)files.size(); i++) {
-    for (Symbol<E> *sym : files[i]->symbols)
+    for (auto sym : files[i]->symbols)
       if (sym->file == files[i])
         if (sym->flags || sym->is_imported || sym->is_exported)
           vec[i].push_back(sym);
   };
 
-  std::vector<Symbol<E> *> syms = flatten(vec);
+  std::vector<SymPtr<E>> syms = flatten(vec);
   ctx.symbol_aux.reserve(syms.size());
 
-  auto add_aux = [&](Symbol<E> *sym) {
+  auto add_aux = [&](auto sym) {
     if (sym->aux_idx == -1) {
       i64 sz = ctx.symbol_aux.size();
       sym->aux_idx = sz;
@@ -906,7 +905,7 @@ void scan_rels(Context<E> &ctx) {
   };
 
   // Assign offsets in additional tables for each dynamic symbol.
-  for (Symbol<E> *sym : syms) {
+  for (auto sym : syms) {
     add_aux(sym);
 
     if (sym->is_imported || sym->is_exported)
@@ -958,7 +957,7 @@ void scan_rels(Context<E> &ctx) {
 
       // Aliases of this symbol are also copied so that they will be
       // resolved to the same address at runtime.
-      for (Symbol<E> *alias : file->find_aliases(sym)) {
+      for (auto alias : file->find_aliases(sym)) {
         add_aux(alias);
         alias->is_imported = true;
         alias->is_exported = true;
@@ -1053,7 +1052,7 @@ void apply_version_script(Context<E> &ctx) {
 
   if (is_simple()) {
     for (VersionPattern &v : ctx.version_patterns)
-      if (Symbol<E> *sym = get_symbol(ctx, v.pattern);
+      if (auto sym = get_symbol(ctx, v.pattern);
           sym->file && !sym->file->is_dso)
         sym->ver_idx = v.ver_idx;
     return;
@@ -1074,7 +1073,7 @@ void apply_version_script(Context<E> &ctx) {
   }
 
   for(auto file : ctx.objs) {
-    for (Symbol<E> *sym : file->get_global_syms()) {
+    for (auto sym : file->get_global_syms()) {
       if (sym->file != file)
         continue;
 
@@ -1111,7 +1110,7 @@ void parse_symbol_version(Context<E> &ctx) {
       if (!file->symvers[i])
         continue;
 
-      Symbol<E> *sym = file->symbols[i + file->first_global];
+      auto sym = file->symbols[i + file->first_global];
       if (sym->file != file)
         continue;
 
@@ -1138,7 +1137,7 @@ void parse_symbol_version(Context<E> &ctx) {
       // hides `foo` so that all references to `foo` are resolved to a
       // versioned symbol. Likewise, if `foo@VERSION` and `foo@@VERSION` are
       // defined, the default one takes precedence.
-      Symbol<E> *sym2 = get_symbol(ctx, sym->name());
+      auto sym2 = get_symbol(ctx, sym->name());
       if (sym2->file == file && !file->symvers[sym2->sym_idx - file->first_global])
         if (sym2->ver_idx == ctx.default_version ||
             (sym2->ver_idx & ~VERSYM_HIDDEN) == (sym->ver_idx & ~VERSYM_HIDDEN))
@@ -1154,7 +1153,7 @@ void compute_import_export(Context<E> &ctx) {
   // Export symbols referenced by DSOs.
   if (!ctx.arg.shared) {
     for(auto file: ctx.dsos) {
-      for (Symbol<E> *sym : file->symbols) {
+      for (auto sym : file->symbols) {
         if (sym->file && !sym->file->is_dso && sym->visibility != STV_HIDDEN) {
           std::scoped_lock lock(sym->mu);
           sym->is_exported = true;
@@ -1164,7 +1163,7 @@ void compute_import_export(Context<E> &ctx) {
   }
 
   for(auto file : ctx.objs) {
-    for (Symbol<E> *sym : file->get_global_syms()) {
+    for (auto sym : file->get_global_syms()) {
       if (!sym->file || sym->visibility == STV_HIDDEN ||
           sym->ver_idx == VER_NDX_LOCAL)
         continue;
@@ -1421,19 +1420,19 @@ template <typename E>
 static i64 get_num_irelative_relocs(Context<E> &ctx) {
   return std::count_if(
     ctx.got->got_syms.begin(), ctx.got->got_syms.end(),
-    [](Symbol<E> *sym) { return sym->get_type() == STT_GNU_IFUNC; });
+    [](SymPtr<E> sym) { return sym->get_type() == STT_GNU_IFUNC; });
 }
 
 template <typename E>
 void fix_synthetic_symbols(Context<E> &ctx) {
-  auto start = [](Symbol<E> *sym, auto &chunk) {
+  auto start = [](SymPtr<E> sym, auto &chunk) {
     if (sym && chunk) {
       sym->shndx = -chunk->shndx;
       sym->value = chunk->shdr.sh_addr;
     }
   };
 
-  auto stop = [](Symbol<E> *sym, auto &chunk) {
+  auto stop = [](SymPtr<E> sym, auto &chunk) {
     if (sym && chunk) {
       sym->shndx = -chunk->shndx;
       sym->value = chunk->shdr.sh_addr + chunk->shdr.sh_size;
@@ -1594,8 +1593,8 @@ void fix_synthetic_symbols(Context<E> &ctx) {
 
   // --defsym=sym=value symbols
   for (i64 i = 0; i < ctx.arg.defsyms.size(); i++) {
-    Symbol<E> *sym = ctx.arg.defsyms[i].first;
-    std::variant<Symbol<E> *, u64> val = ctx.arg.defsyms[i].second;
+    auto sym = ctx.arg.defsyms[i].first;
+    std::variant<SymPtr<E>, u64> val = ctx.arg.defsyms[i].second;
 
     sym->shndx = 0;
 
@@ -1604,7 +1603,7 @@ void fix_synthetic_symbols(Context<E> &ctx) {
       continue;
     }
 
-    Symbol<E> *sym2 = std::get<Symbol<E> *>(val);
+    auto sym2 = std::get<SymPtr<E>>(val);
     if (!sym2->file) {
       Error(ctx) << "--defsym: undefined symbol: " << *sym2;
       continue;

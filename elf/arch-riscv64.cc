@@ -102,9 +102,9 @@ static void write_plt_header(Context<E> &ctx) {
   write_itype(buf + 16, gotplt - plt);
 }
 
-static void write_plt_entry(Context<E> &ctx, Symbol<E> &sym) {
+static void write_plt_entry(Context<E> &ctx, SymPtr<E> sym) {
   u8 *ent = ctx.buf + ctx.plt->shdr.sh_offset + E::plt_hdr_size +
-            sym.get_plt_idx(ctx) * E::plt_size;
+            sym->get_plt_idx(ctx) * E::plt_size;
 
   static const u32 data[] = {
     0x00000e17, // auipc   t3, %pcrel_hi(function@.got.plt)
@@ -113,8 +113,8 @@ static void write_plt_entry(Context<E> &ctx, Symbol<E> &sym) {
     0x00000013, // nop
   };
 
-  u64 gotplt = sym.get_gotplt_addr(ctx);
-  u64 plt = sym.get_plt_addr(ctx);
+  u64 gotplt = sym->get_gotplt_addr(ctx);
+  u64 plt = sym->get_plt_addr(ctx);
 
   memcpy(ent, data, sizeof(data));
   write_utype(ent, gotplt - plt);
@@ -124,8 +124,8 @@ static void write_plt_entry(Context<E> &ctx, Symbol<E> &sym) {
 template <>
 void PltSection<E>::copy_buf(Context<E> &ctx) {
   write_plt_header(ctx);
-  for (Symbol<E> *sym : symbols)
-    write_plt_entry(ctx, *sym);
+  for (auto sym : symbols)
+    write_plt_entry(ctx, sym);
 }
 
 template <>
@@ -139,7 +139,7 @@ void PltGotSection<E>::copy_buf(Context<E> &ctx) {
     0x00000013, // nop
   };
 
-  for (Symbol<E> *sym : symbols) {
+  for (auto sym : symbols) {
     u8 *ent = buf + sym->get_pltgot_idx(ctx) * 16;
     u64 got = sym->get_got_addr(ctx);
     u64 plt = sym->get_plt_addr(ctx);
@@ -204,7 +204,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
         rel.r_type == R_RISCV_ALIGN)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     i64 r_offset = rel.r_offset + extra.r_deltas[i];
     u8 *loc = base + r_offset;
 
@@ -212,10 +212,10 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
     if (rel_fragments && rel_fragments[frag_idx].idx == i)
       frag_ref = &rel_fragments[frag_idx++];
 
-#define S   (frag_ref ? frag_ref->frag->get_addr(ctx) : sym.get_addr(ctx))
+#define S   (frag_ref ? frag_ref->frag->get_addr(ctx) : sym->get_addr(ctx))
 #define A   (frag_ref ? (u64)frag_ref->addend : (u64)rel.r_addend)
 #define P   (output_section->shdr.sh_addr + offset + r_offset)
-#define G   (sym.get_got_addr(ctx) - ctx.got->shdr.sh_addr)
+#define G   (sym->get_got_addr(ctx) - ctx.got->shdr.sh_addr)
 #define GOT ctx.got->shdr.sh_addr
 
     switch (rel.r_type) {
@@ -223,10 +223,10 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       *(ul32 *)loc = S + A;
       break;
     case R_RISCV_64:
-      if (sym.is_absolute() || !ctx.arg.pic) {
+      if (sym->is_absolute() || !ctx.arg.pic) {
         *(ul64 *)loc = S + A;
-      } else if (sym.is_imported) {
-        *dynrel++ = {P, R_RISCV_64, (u32)sym.get_dynsym_idx(ctx), A};
+      } else if (sym->is_imported) {
+        *dynrel++ = {P, R_RISCV_64, (u32)sym->get_dynsym_idx(ctx), A};
         *(ul64 *)loc = A;
       } else {
         if (!is_relr_reloc(ctx, rel))
@@ -257,7 +257,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
         *(ul32 *)loc = (0b11111'000000 & jalr) | 0b101111;
         write_jtype(loc, S + A - P);
       } else {
-        u64 val = sym.esym().is_undef_weak() ? 0 : S + A - P;
+        u64 val = sym->esym().is_undef_weak() ? 0 : S + A - P;
         write_utype(loc, val);
         write_itype(loc + 4, val);
       }
@@ -267,13 +267,13 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       *(ul32 *)loc = G + GOT + A - P;
       break;
     case R_RISCV_TLS_GOT_HI20:
-      *(ul32 *)loc = sym.get_gottp_addr(ctx) + A - P;
+      *(ul32 *)loc = sym->get_gottp_addr(ctx) + A - P;
       break;
     case R_RISCV_TLS_GD_HI20:
-      *(ul32 *)loc = sym.get_tlsgd_addr(ctx) + A - P;
+      *(ul32 *)loc = sym->get_tlsgd_addr(ctx) + A - P;
       break;
     case R_RISCV_PCREL_HI20:
-      if (sym.esym().is_undef_weak()) {
+      if (sym->esym().is_undef_weak()) {
         // Calling an undefined weak symbol does not make sense.
         // We make such call into an infinite loop. This should
         // help debugging of a faulty program.
@@ -372,11 +372,11 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
     if (r.r_type != R_RISCV_PCREL_LO12_I && r.r_type != R_RISCV_PCREL_LO12_S)
       continue;
 
-    Symbol<E> &sym = *file.symbols[r.r_sym];
-    assert(sym.get_input_section() == this);
+    auto sym = file.symbols[r.r_sym];
+    assert(sym->get_input_section() == this);
 
     u8 *loc = base + r.r_offset + extra.r_deltas[i];
-    u32 val = *(ul32 *)(base + sym.value);
+    u32 val = *(ul32 *)(base + sym->value);
 
     switch (r.r_type) {
     case R_RISCV_PCREL_LO12_I:
@@ -415,10 +415,10 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
     if (rel.r_type == R_RISCV_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     u8 *loc = base + rel.r_offset;
 
-    if (!sym.file) {
+    if (!sym->file) {
       record_undef_error(ctx, rel);
       continue;
     }
@@ -427,7 +427,7 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
     i64 addend;
     std::tie(frag, addend) = get_fragment(ctx, rel);
 
-#define S (frag ? frag->get_addr(ctx) : sym.get_addr(ctx))
+#define S (frag ? frag->get_addr(ctx) : sym->get_addr(ctx))
 #define A (frag ? (u64)addend : (u64)rel.r_addend)
 
     switch (rel.r_type) {
@@ -537,16 +537,16 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
     if (rel.r_type == R_RISCV_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
 
-    if (!sym.file) {
+    if (!sym->file) {
       record_undef_error(ctx, rel);
       continue;
     }
 
-    if (sym.get_type() == STT_GNU_IFUNC) {
-      sym.flags |= NEEDS_GOT;
-      sym.flags |= NEEDS_PLT;
+    if (sym->get_type() == STT_GNU_IFUNC) {
+      sym->flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_PLT;
     }
 
     switch (rel.r_type) {
@@ -584,18 +584,18 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
       break;
     case R_RISCV_CALL:
     case R_RISCV_CALL_PLT:
-      if (sym.is_imported)
-        sym.flags |= NEEDS_PLT;
+      if (sym->is_imported)
+        sym->flags |= NEEDS_PLT;
       break;
     case R_RISCV_GOT_HI20:
-      sym.flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_GOT;
       break;
     case R_RISCV_TLS_GOT_HI20:
       ctx.has_gottp_rel = true;
-      sym.flags |= NEEDS_GOTTP;
+      sym->flags |= NEEDS_GOTTP;
       break;
     case R_RISCV_TLS_GD_HI20:
-      sym.flags |= NEEDS_TLSGD;
+      sym->flags |= NEEDS_TLSGD;
       break;
     case R_RISCV_PCREL_HI20:
     case R_RISCV_PCREL_LO12_I:
@@ -650,31 +650,31 @@ static bool is_resizable(Context<E> &ctx, InputSection<E> *isec) {
 }
 
 template <typename E>
-static std::vector<Symbol<E> *> get_sorted_symbols(InputSection<E> &isec) {
-  std::vector<Symbol<E> *> vec;
-  for (Symbol<E> *sym : isec.file.symbols)
+static std::vector<SymPtr<E> > get_sorted_symbols(InputSection<E> &isec) {
+  std::vector<SymPtr<E> > vec;
+  for (SymPtr<E> sym : isec.file.symbols)
     if (sym->file == &isec.file && sym->get_input_section() == &isec)
       vec.push_back(sym);
-  sort(vec, [](Symbol<E> *a, Symbol<E> *b) { return a->value < b->value; });
+  sort(vec, [](SymPtr<E> a, SymPtr<E> b) { return a->value < b->value; });
   return vec;
 }
 
 // Returns the distance between a relocated place and a symbol.
-static i64 compute_distance(Context<E> &ctx, Symbol<E> &sym,
+static i64 compute_distance(Context<E> &ctx, SymPtr<E> sym,
                             InputSection<E> &isec, const ElfRel<E> &rel) {
   // We handle absolute symbols as if they were infinitely far away
   // because `relax_section` may increase a distance between a branch
   // instruction and an absolute symbol. Branching to an absolute
   // location is extremely rare in real code, though.
-  if (sym.is_absolute())
+  if (sym->is_absolute())
     return INT32_MAX;
 
   // Likewise, relocations against weak undefined symbols won't be relaxed.
-  if (sym.esym().is_undef_weak())
+  if (sym->esym().is_undef_weak())
     return INT32_MAX;
 
   // Compute a distance between the relocated place and the symbol.
-  i64 S = sym.get_addr(ctx);
+  i64 S = sym->get_addr(ctx);
   i64 A = rel.r_addend;
   i64 P = isec.get_addr() + rel.r_offset;
   return S + A - P;
@@ -682,8 +682,8 @@ static i64 compute_distance(Context<E> &ctx, Symbol<E> &sym,
 
 // Relax R_RISCV_CALL and R_RISCV_CALL_PLT relocations.
 static void relax_section(Context<E> &ctx, InputSection<E> &isec) {
-  std::vector<Symbol<E> *> vec = get_sorted_symbols(isec);
-  std::span<Symbol<E> *> syms = vec;
+  std::vector<SymPtr<E> > vec = get_sorted_symbols(isec);
+  std::span<SymPtr<E> > syms = vec;
   i64 delta = 0;
 
   std::span<const ElfRel<E>> rels = isec.get_rels(ctx);
@@ -719,7 +719,7 @@ static void relax_section(Context<E> &ctx, InputSection<E> &isec) {
 
         // If the jump target is within ±1 MiB, we can replace AUIPC+JALR
         // with JAL, saving 4 bytes.
-        Symbol<E> &sym = *isec.file.symbols[r.r_sym];
+        auto sym = isec.file.symbols[r.r_sym];
         i64 dist = compute_distance(ctx, sym, isec, r);
         if (dist % 2 == 0 && -(1 << 20) <= dist && dist < (1 << 20))
           delta2 = -4;
@@ -737,7 +737,7 @@ static void relax_section(Context<E> &ctx, InputSection<E> &isec) {
     delta += delta2;
   }
 
-  for (Symbol<E> *sym : syms)
+  for (SymPtr<E> sym : syms)
     sym->value += delta;
   isec.extra.r_deltas[rels.size()] = delta;
 

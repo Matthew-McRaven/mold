@@ -40,7 +40,7 @@ void PltSection<E>::copy_buf(Context<E> &ctx) {
     0xff, 0x25, 0, 0, 0, 0, // jmp *foo@GOTPLT
   };
 
-  for (Symbol<E> *sym : symbols) {
+  for (auto sym : symbols) {
     i64 idx = sym->get_plt_idx(ctx);
     u8 *ent = buf + E::plt_hdr_size + idx * E::plt_size;
     memcpy(ent, data, sizeof(data));
@@ -59,7 +59,7 @@ void PltGotSection<E>::copy_buf(Context<E> &ctx) {
     0xff, 0x25, 0, 0, 0, 0, // jmp *foo@GOT
   };
 
-  for (Symbol<E> *sym : symbols) {
+  for (auto sym : symbols) {
     u8 *ent = buf + sym->get_pltgot_idx(ctx) * E::pltgot_size;
     memcpy(ent, data, sizeof(data));
     *(ul32 *)(ent + 6) = sym->get_got_addr(ctx) - sym->get_plt_addr(ctx) - 10;
@@ -182,7 +182,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
     if (rel.r_type == R_X86_64_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     u8 *loc = base + rel.r_offset;
 
     const SectionFragmentRef<E> *frag_ref = nullptr;
@@ -192,7 +192,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
     auto overflow_check = [&](i64 val, i64 lo, i64 hi) {
       if (val < lo || hi <= val)
         Error(ctx) << *this << ": relocation " << rel << " against "
-                   << sym << " out of range: " << val << " is not in ["
+                   << *sym << " out of range: " << val << " is not in ["
                    << lo << ", " << hi << ")";
     };
 
@@ -230,10 +230,10 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       *(ul64 *)loc = val;
     };
 
-#define S   (frag_ref ? frag_ref->frag->get_addr(ctx) : sym.get_addr(ctx))
+#define S   (frag_ref ? frag_ref->frag->get_addr(ctx) : sym->get_addr(ctx))
 #define A   (frag_ref ? (u64)frag_ref->addend : (u64)rel.r_addend)
 #define P   (output_section->shdr.sh_addr + offset + rel.r_offset)
-#define G   (sym.get_got_addr(ctx) - ctx.gotplt->shdr.sh_addr)
+#define G   (sym->get_got_addr(ctx) - ctx.gotplt->shdr.sh_addr)
 #define GOT ctx.gotplt->shdr.sh_addr
 
     switch (rel.r_type) {
@@ -250,10 +250,10 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       write32s(S + A);
       continue;
     case R_X86_64_64:
-      if (sym.is_absolute() || !ctx.arg.pic) {
+      if (sym->is_absolute() || !ctx.arg.pic) {
         write64(S + A);
-      } else if (sym.is_imported) {
-        *dynrel++ = {P, R_X86_64_64, (u32)sym.get_dynsym_idx(ctx), A};
+      } else if (sym->is_imported) {
+        *dynrel++ = {P, R_X86_64_64, (u32)sym->get_dynsym_idx(ctx), A};
         write64(A);
       } else {
         if (!is_relr_reloc(ctx, rel))
@@ -271,10 +271,10 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       write32s(S + A - P);
       continue;
     case R_X86_64_PC64:
-      if (sym.is_absolute() || !sym.is_imported || !ctx.arg.shared) {
+      if (sym->is_absolute() || !sym->is_imported || !ctx.arg.shared) {
         write64(S + A - P);
       } else {
-        *dynrel++ = {P, R_X86_64_64, (u32)sym.get_dynsym_idx(ctx), A};
+        *dynrel++ = {P, R_X86_64_64, (u32)sym->get_dynsym_idx(ctx), A};
         write64(A);
       }
       continue;
@@ -306,7 +306,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       write64(G + GOT + A - P);
       continue;
     case R_X86_64_GOTPCRELX:
-      if (sym.get_got_idx(ctx) == -1) {
+      if (sym->get_got_idx(ctx) == -1) {
         u32 insn = relax_gotpcrelx(loc - 2);
         loc[-2] = insn >> 8;
         loc[-1] = insn;
@@ -316,7 +316,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       }
       continue;
     case R_X86_64_REX_GOTPCRELX:
-      if (sym.get_got_idx(ctx) == -1) {
+      if (sym->get_got_idx(ctx) == -1) {
         u32 insn = relax_rex_gotpcrelx(loc - 3);
         loc[-3] = insn >> 16;
         loc[-2] = insn >> 8;
@@ -327,7 +327,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       }
       continue;
     case R_X86_64_TLSGD:
-      if (sym.get_tlsgd_idx(ctx) == -1) {
+      if (sym->get_tlsgd_idx(ctx) == -1) {
         // Relax GD to LE
         i64 val = S - ctx.tls_end + A + 4;
         overflow_check(val, -((i64)1 << 31), (i64)1 << 31);
@@ -360,7 +360,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
 
         i++;
       } else {
-        write32s(sym.get_tlsgd_addr(ctx) + A - P);
+        write32s(sym->get_tlsgd_addr(ctx) + A - P);
       }
       continue;
     case R_X86_64_TLSLD:
@@ -422,35 +422,35 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       write64(S + A - ctx.tls_end);
       continue;
     case R_X86_64_GOTTPOFF:
-      if (sym.get_gottp_idx(ctx) == -1) {
+      if (sym->get_gottp_idx(ctx) == -1) {
         u32 insn = relax_gottpoff(loc - 3);
         loc[-3] = insn >> 16;
         loc[-2] = insn >> 8;
         loc[-1] = insn;
         write32s(S + A - ctx.tls_end + 4);
       } else {
-        write32s(sym.get_gottp_addr(ctx) + A - P);
+        write32s(sym->get_gottp_addr(ctx) + A - P);
       }
       continue;
     case R_X86_64_GOTPC32_TLSDESC:
-      if (sym.get_tlsdesc_idx(ctx) == -1) {
+      if (sym->get_tlsdesc_idx(ctx) == -1) {
         u32 insn = relax_gotpc32_tlsdesc(loc - 3);
         loc[-3] = insn >> 16;
         loc[-2] = insn >> 8;
         loc[-1] = insn;
         write32s(S + A - ctx.tls_end + 4);
       } else {
-        write32s(sym.get_tlsdesc_addr(ctx) + A - P);
+        write32s(sym->get_tlsdesc_addr(ctx) + A - P);
       }
       continue;
     case R_X86_64_SIZE32:
-      write32(sym.esym().st_size + A);
+      write32(sym->esym().st_size + A);
       continue;
     case R_X86_64_SIZE64:
-      write64(sym.esym().st_size + A);
+      write64(sym->esym().st_size + A);
       continue;
     case R_X86_64_TLSDESC_CALL:
-      if (sym.get_tlsdesc_idx(ctx) == -1) {
+      if (sym->get_tlsdesc_idx(ctx) == -1) {
         // call *(%rax) -> nop
         loc[0] = 0x66;
         loc[1] = 0x90;
@@ -489,10 +489,10 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
     if (rel.r_type == R_X86_64_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     u8 *loc = base + rel.r_offset;
 
-    if (!sym.file) {
+    if (!sym->file) {
       record_undef_error(ctx, rel);
       continue;
     }
@@ -504,7 +504,7 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
     auto overflow_check = [&](i64 val, i64 lo, i64 hi) {
       if (val < lo || hi <= val)
         Error(ctx) << *this << ": relocation " << rel << " against "
-                   << sym << " out of range: " << val << " is not in ["
+                   << *sym << " out of range: " << val << " is not in ["
                    << lo << ", " << hi << ")";
     };
 
@@ -528,7 +528,7 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
       *(ul32 *)loc = val;
     };
 
-#define S (frag ? frag->get_addr(ctx) : sym.get_addr(ctx))
+#define S (frag ? frag->get_addr(ctx) : sym->get_addr(ctx))
 #define A (frag ? (u64)addend : (u64)rel.r_addend)
 
     switch (rel.r_type) {
@@ -566,10 +566,10 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
         *(ul64 *)loc = S + A - ctx.tls_begin;
       break;
     case R_X86_64_SIZE32:
-      write32(sym.esym().st_size + A);
+      write32(sym->esym().st_size + A);
       break;
     case R_X86_64_SIZE64:
-      *(ul64 *)loc = sym.esym().st_size + A;
+      *(ul64 *)loc = sym->esym().st_size + A;
       break;
     default:
       Fatal(ctx) << *this << ": invalid relocation for non-allocated sections: "
@@ -600,17 +600,17 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
     if (rel.r_type == R_X86_64_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     u8 *loc = (u8 *)(contents.data() + rel.r_offset);
 
-    if (!sym.file) {
+    if (!sym->file) {
       record_undef_error(ctx, rel);
       continue;
     }
 
-    if (sym.get_type() == STT_GNU_IFUNC) {
-      sym.flags |= NEEDS_GOT;
-      sym.flags |= NEEDS_PLT;
+    if (sym->get_type() == STT_GNU_IFUNC) {
+      sym->flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_PLT;
     }
 
     switch (rel.r_type) {
@@ -670,26 +670,26 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
     case R_X86_64_GOTPC64:
     case R_X86_64_GOTPCREL:
     case R_X86_64_GOTPCREL64:
-      sym.flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_GOT;
       break;
     case R_X86_64_GOTPCRELX: {
       if (rel.r_addend != -4)
         Fatal(ctx) << *this << ": bad r_addend for R_X86_64_GOTPCRELX";
 
-      bool do_relax = ctx.arg.relax && !sym.is_imported &&
-                      sym.is_relative() && relax_gotpcrelx(loc - 2);
+      bool do_relax = ctx.arg.relax && !sym->is_imported &&
+                      sym->is_relative() && relax_gotpcrelx(loc - 2);
       if (!do_relax)
-        sym.flags |= NEEDS_GOT;
+        sym->flags |= NEEDS_GOT;
       break;
     }
     case R_X86_64_REX_GOTPCRELX: {
       if (rel.r_addend != -4)
         Fatal(ctx) << *this << ": bad r_addend for R_X86_64_REX_GOTPCRELX";
 
-      bool do_relax = ctx.arg.relax && !sym.is_imported &&
-                      sym.is_relative() && relax_rex_gotpcrelx(loc - 3);
+      bool do_relax = ctx.arg.relax && !sym->is_imported &&
+                      sym->is_relative() && relax_rex_gotpcrelx(loc - 3);
       if (!do_relax)
-        sym.flags |= NEEDS_GOT;
+        sym->flags |= NEEDS_GOT;
       break;
     }
     case R_X86_64_PLT32:
@@ -712,10 +712,10 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
           ty != R_X86_64_GOTPCREL && ty != R_X86_64_GOTPCRELX)
         Fatal(ctx) << *this << ": TLSGD reloc must be followed by PLT or GOTPCREL";
 
-      if (ctx.arg.relax && !ctx.arg.shared && !sym.is_imported)
+      if (ctx.arg.relax && !ctx.arg.shared && !sym->is_imported)
         i++;
       else
-        sym.flags |= NEEDS_TLSGD;
+        sym->flags |= NEEDS_TLSGD;
       break;
     }
     case R_X86_64_TLSLD: {
@@ -737,9 +737,9 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
       ctx.has_gottp_rel = true;
 
       bool do_relax = ctx.arg.relax && !ctx.arg.shared &&
-                      !sym.is_imported && relax_gottpoff(loc - 3);
+                      !sym->is_imported && relax_gottpoff(loc - 3);
       if (!do_relax)
-        sym.flags |= NEEDS_GOTTP;
+        sym->flags |= NEEDS_GOTTP;
       break;
     }
     case R_X86_64_GOTPC32_TLSDESC: {
@@ -747,9 +747,9 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
         Fatal(ctx) << *this << ": GOTPC32_TLSDESC relocation is used"
                    << " against an invalid code sequence";
 
-      bool do_relax = ctx.relax_tlsdesc && !sym.is_imported;
+      bool do_relax = ctx.relax_tlsdesc && !sym->is_imported;
       if (!do_relax)
-        sym.flags |= NEEDS_TLSDESC;
+        sym->flags |= NEEDS_TLSDESC;
       break;
     }
     case R_X86_64_GOTOFF64:

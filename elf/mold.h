@@ -21,7 +21,6 @@
 #include <tbb/concurrent_hash_map.h>
 #include <tbb/concurrent_unordered_map.h>
 #include <tbb/concurrent_vector.h>
-#include <tbb/enumerable_thread_specific.h>
 #include <tbb/spin_mutex.h>
 #include <tbb/task_group.h>
 #include <type_traits>
@@ -63,7 +62,8 @@ template <typename E> class Symbol;
 template <typename E> struct CieRecord;
 template <typename E> struct Context;
 template <typename E> struct FdeRecord;
-
+template <typename E>
+using SymPtr = std::shared_ptr<Symbol<E>>;
 template <typename E> class RChunk;
 template <typename E> class ROutputEhdr;
 template <typename E> class ROutputShdr;
@@ -73,6 +73,8 @@ template <typename E> class RSymtabSection;
 template <typename E>
 std::ostream &operator<<(std::ostream &out, const Symbol<E> &sym);
 
+template <typename E>
+std::ostream &operator<<(std::ostream &out, const SymPtr<E> &sym);
 //
 // Mergeable section fragments
 //
@@ -230,7 +232,7 @@ public:
   i32 thunk_idx = -1;
   i64 offset = -1;
   std::mutex mu;
-  std::vector<Symbol<ARM64> *> symbols;
+  std::vector<SymPtr<ARM64>> symbols;
 };
 
 struct RangeExtensionRef {
@@ -317,14 +319,14 @@ private:
   typedef enum : u8 { NONE, ERROR, COPYREL, PLT, CPLT, DYNREL, BASEREL } Action;
 
   void dispatch(Context<E> &ctx, Action table[3][4], i64 i,
-                const ElfRel<E> &rel, Symbol<E> &sym);
+                const ElfRel<E> &rel, SymPtr<E> sym);
   void copy_contents(Context<E> &ctx, u8 *buf);
   void copy_contents_riscv(Context<E> &ctx, u8 *buf);
 
   std::pair<SectionFragment<E> *, i64>
   get_fragment(Context<E> &ctx, const ElfRel<E> &rel);
 
-  std::optional<u64> get_tombstone(Symbol<E> &sym);
+  std::optional<u64> get_tombstone(SymPtr<E> sym);
   bool is_relr_reloc(Context<E> &ctx, const ElfRel<E> &rel);
 };
 
@@ -452,7 +454,7 @@ struct GotEntry {
   i64 idx = 0;
   u64 val = 0;
   i64 r_type = 0;
-  Symbol<E> *sym = nullptr;
+  SymPtr<E> sym = nullptr;
 };
 
 template <typename E>
@@ -465,20 +467,20 @@ public:
     this->shdr.sh_addralign = E::word_size;
   }
 
-  void add_got_symbol(Context<E> &ctx, Symbol<E> *sym);
-  void add_gottp_symbol(Context<E> &ctx, Symbol<E> *sym);
-  void add_tlsgd_symbol(Context<E> &ctx, Symbol<E> *sym);
-  void add_tlsdesc_symbol(Context<E> &ctx, Symbol<E> *sym);
+  void add_got_symbol(Context<E> &ctx, SymPtr<E> sym);
+  void add_gottp_symbol(Context<E> &ctx, SymPtr<E> sym);
+  void add_tlsgd_symbol(Context<E> &ctx, SymPtr<E> sym);
+  void add_tlsdesc_symbol(Context<E> &ctx, SymPtr<E> sym);
   void add_tlsld(Context<E> &ctx);
 
   u64 get_tlsld_addr(Context<E> &ctx) const;
   i64 get_reldyn_size(Context<E> &ctx) const;
   void copy_buf(Context<E> &ctx) override;
 
-  std::vector<Symbol<E> *> got_syms;
-  std::vector<Symbol<E> *> gottp_syms;
-  std::vector<Symbol<E> *> tlsgd_syms;
-  std::vector<Symbol<E> *> tlsdesc_syms;
+  std::vector<SymPtr<E>> got_syms;
+  std::vector<SymPtr<E>> gottp_syms;
+  std::vector<SymPtr<E>> tlsgd_syms;
+  std::vector<SymPtr<E>> tlsdesc_syms;
   u32 tlsld_idx = -1;
 
   void construct_relr(Context<E> &ctx);
@@ -512,10 +514,10 @@ public:
     this->shdr.sh_addralign = 16;
   }
 
-  void add_symbol(Context<E> &ctx, Symbol<E> *sym);
+  void add_symbol(Context<E> &ctx, SymPtr<E> sym);
   void copy_buf(Context<E> &ctx) override;
 
-  std::vector<Symbol<E> *> symbols;
+  std::vector<SymPtr<E>> symbols;
 };
 
 template <typename E>
@@ -528,10 +530,10 @@ public:
     this->shdr.sh_addralign = E::pltgot_size;
   }
 
-  void add_symbol(Context<E> &ctx, Symbol<E> *sym);
+  void add_symbol(Context<E> &ctx, SymPtr<E> sym);
   void copy_buf(Context<E> &ctx) override;
 
-  std::vector<Symbol<E> *> symbols;
+  std::vector<SymPtr<E>> symbols;
 };
 
 template <typename E>
@@ -667,12 +669,12 @@ public:
   }
 
   void keep() { this->symbols.resize(1); }
-  void add_symbol(Context<E> &ctx, Symbol<E> *sym);
+  void add_symbol(Context<E> &ctx, SymPtr<E> sym);
   void finalize(Context<E> &ctx);
   void update_shdr(Context<E> &ctx) override;
   void copy_buf(Context<E> &ctx) override;
 
-  std::vector<Symbol<E> *> symbols;
+  std::vector<SymPtr<E>> symbols;
 };
 
 template <typename E>
@@ -700,7 +702,7 @@ public:
     this->shdr.sh_addralign = E::word_size;
   }
 
-  std::span<Symbol<E> *> get_exported_symbols(Context<E> &ctx);
+  std::span<SymPtr<E>> get_exported_symbols(Context<E> &ctx);
   void update_shdr(Context<E> &ctx) override;
   void copy_buf(Context<E> &ctx) override;
 
@@ -779,12 +781,12 @@ public:
     this->shdr.sh_addralign = 64;
   }
 
-  void add_symbol(Context<E> &ctx, Symbol<E> *sym);
+  void add_symbol(Context<E> &ctx, SymPtr<E> sym);
   void update_shdr(Context<E> &ctx) override;
   void copy_buf(Context<E> &ctx) override;
 
   bool is_relro;
-  std::vector<Symbol<E> *> symbols;
+  std::vector<SymPtr<E>> symbols;
 };
 
 template <typename E>
@@ -1061,13 +1063,13 @@ public:
   mark_live_objects(Context<E> &ctx,
                     std::function<void(InputFile<E> *)> feeder) = 0;
 
-  std::span<Symbol<E> *> get_global_syms();
+  std::span<SymPtr<E>> get_global_syms();
   std::string_view get_source_name() const;
 
   MappedFile<Context<E>> *mf = nullptr;
   std::span<ElfShdr<E>> elf_sections;
   std::span<ElfSym<E>> elf_syms;
-  std::vector<Symbol<E> *> symbols;
+  std::vector<SymPtr<E>> symbols;
   i64 first_global = 0;
 
   std::string filename;
@@ -1075,7 +1077,7 @@ public:
   u32 priority;
   std::atomic_bool is_alive = false;
   std::string_view shstrtab;
-  std::unique_ptr<Symbol<E>[]> local_syms;
+  std::vector<SymPtr<E>> local_syms;
   std::string_view symbol_strtab;
 
   // To create an output .symtab
@@ -1126,7 +1128,7 @@ public:
   std::vector<FdeRecord<E>> fdes;
   std::vector<const char *> symvers;
   std::vector<SectionFragmentRef<E>> sym_fragments;
-  std::vector<std::pair<ComdatGroup *, std::span<ul32>>> comdat_groups;
+  std::vector<std::pair<std::shared_ptr<ComdatGroup>, std::span<ul32>>> comdat_groups;
   bool exclude_libs = false;
   u32 features = 0;
   bool is_lto_obj = false;
@@ -1169,9 +1171,9 @@ private:
   void initialize_ehframe_sections(Context<E> &ctx);
   u32 read_note_gnu_property(Context<E> &ctx, const ElfShdr<E> &shdr);
   void read_ehframe(Context<E> &ctx, InputSection<E> &isec);
-  void override_symbol(Context<E> &ctx, Symbol<E> &sym,
+  void override_symbol(Context<E> &ctx, SymPtr<E> sym,
                        const ElfSym<E> &esym, i64 symidx);
-  void merge_visibility(Context<E> &ctx, Symbol<E> &sym, u8 visibility);
+  void merge_visibility(Context<E> &ctx, SymPtr<E> sym, u8 visibility);
 
   bool has_common_symbol = false;
 
@@ -1187,8 +1189,8 @@ public:
 
   void parse(Context<E> &ctx);
   void resolve_symbols(Context<E> &ctx) override;
-  std::vector<Symbol<E> *> find_aliases(Symbol<E> *sym);
-  bool is_readonly(Context<E> &ctx, Symbol<E> *sym);
+  std::vector<SymPtr<E>> find_aliases(SymPtr<E> sym);
+  bool is_readonly(Context<E> &ctx, SymPtr<E> sym);
 
   void mark_live_objects(Context<E> &ctx,
                          std::function<void(InputFile<E> *)> feeder) override;
@@ -1205,7 +1207,7 @@ private:
   SharedFile(Context<E> &ctx, MappedFile<Context<E>> *mf);
 
   std::string get_soname(Context<E> &ctx);
-  void maybe_override_symbol(Symbol<E> &sym, const ElfSym<E> &esym);
+  void maybe_override_symbol(SymPtr<E> sym, const ElfSym<E> &esym);
   std::vector<std::string_view> read_verdef(Context<E> &ctx);
 
   std::vector<u16> versyms;
@@ -1341,11 +1343,11 @@ public:
     this->shdr.sh_addralign = 4;
   }
 
-  void add_symbol(Context<ARM32> &ctx, Symbol<ARM32> *sym);
+  void add_symbol(Context<ARM32> &ctx, SymPtr<ARM32> sym);
   void update_shdr(Context<ARM32> &ctx) override;
   void copy_buf(Context<ARM32> &ctx) override;
 
-  std::vector<Symbol<ARM32> *> symbols;
+  std::vector<SymPtr<ARM32>> symbols;
 
   static constexpr i64 ENTRY_SIZE = 12;
 };
@@ -1558,7 +1560,7 @@ struct Context {
     std::unordered_map<std::string_view, u64> section_start;
     std::unordered_set<std::string_view> ignore_ir_file;
     std::unordered_set<std::string_view> wrap;
-    std::vector<std::pair<Symbol<E> *, std::variant<Symbol<E> *, u64>>> defsyms;
+    std::vector<std::pair<SymPtr<E>, std::variant<SymPtr<E>, u64>>> defsyms;
     std::vector<std::string> library_paths;
     std::vector<std::string> plugin_opt;
     std::vector<std::string> version_definitions;
@@ -1588,8 +1590,8 @@ struct Context {
   bool has_lto_object = false;
 
   // Symbol table
-  tbb::concurrent_hash_map<std::string_view, Symbol<E>, HashCmp> symbol_map;
-  tbb::concurrent_hash_map<std::string_view, ComdatGroup, HashCmp> comdat_groups;
+  tbb::concurrent_hash_map<std::string_view, SymPtr<E>, HashCmp> symbol_map;
+  tbb::concurrent_hash_map<std::string_view, std::shared_ptr<ComdatGroup>, HashCmp> comdat_groups;
   tbb::concurrent_vector<std::unique_ptr<MergedSection<E>>> merged_sections;
   tbb::concurrent_vector<std::unique_ptr<Chunk<E>>> output_chunks;
   std::vector<std::unique_ptr<OutputSection<E>>> output_sections;
@@ -1682,31 +1684,31 @@ struct Context {
   bool relax_tlsdesc = false;
 
   // Linker-synthesized symbols
-  Symbol<E> *_DYNAMIC = nullptr;
-  Symbol<E> *_GLOBAL_OFFSET_TABLE_ = nullptr;
-  Symbol<E> *_TLS_MODULE_BASE_ = nullptr;
-  Symbol<E> *__GNU_EH_FRAME_HDR = nullptr;
-  Symbol<E> *__bss_start = nullptr;
-  Symbol<E> *__dso_handle = nullptr;
-  Symbol<E> *__ehdr_start = nullptr;
-  Symbol<E> *__executable_start = nullptr;
-  Symbol<E> *__exidx_end = nullptr;
-  Symbol<E> *__exidx_start = nullptr;
-  Symbol<E> *__fini_array_end = nullptr;
-  Symbol<E> *__fini_array_start = nullptr;
-  Symbol<E> *__global_pointer = nullptr;
-  Symbol<E> *__init_array_end = nullptr;
-  Symbol<E> *__init_array_start = nullptr;
-  Symbol<E> *__preinit_array_end = nullptr;
-  Symbol<E> *__preinit_array_start = nullptr;
-  Symbol<E> *__rel_iplt_end = nullptr;
-  Symbol<E> *__rel_iplt_start = nullptr;
-  Symbol<E> *_edata = nullptr;
-  Symbol<E> *_end = nullptr;
-  Symbol<E> *_etext = nullptr;
-  Symbol<E> *edata = nullptr;
-  Symbol<E> *end = nullptr;
-  Symbol<E> *etext = nullptr;
+  SymPtr<E> _DYNAMIC = nullptr;
+  SymPtr<E> _GLOBAL_OFFSET_TABLE_ = nullptr;
+  SymPtr<E> _TLS_MODULE_BASE_ = nullptr;
+  SymPtr<E> __GNU_EH_FRAME_HDR = nullptr;
+  SymPtr<E> __bss_start = nullptr;
+  SymPtr<E> __dso_handle = nullptr;
+  SymPtr<E> __ehdr_start = nullptr;
+  SymPtr<E> __executable_start = nullptr;
+  SymPtr<E> __exidx_end = nullptr;
+  SymPtr<E> __exidx_start = nullptr;
+  SymPtr<E> __fini_array_end = nullptr;
+  SymPtr<E> __fini_array_start = nullptr;
+  SymPtr<E> __global_pointer = nullptr;
+  SymPtr<E> __init_array_end = nullptr;
+  SymPtr<E> __init_array_start = nullptr;
+  SymPtr<E> __preinit_array_end = nullptr;
+  SymPtr<E> __preinit_array_start = nullptr;
+  SymPtr<E> __rel_iplt_end = nullptr;
+  SymPtr<E> __rel_iplt_start = nullptr;
+  SymPtr<E> _edata = nullptr;
+  SymPtr<E> _end = nullptr;
+  SymPtr<E> _etext = nullptr;
+  SymPtr<E> edata = nullptr;
+  SymPtr<E> end = nullptr;
+  SymPtr<E> etext = nullptr;
 };
 
 template <typename E>
@@ -1953,15 +1955,20 @@ public:
 // of Symbol and returns it. Otherwise, returns the previously-
 // instantiated object. `key` is usually the same as `name`.
 template <typename E>
-Symbol<E> *get_symbol(Context<E> &ctx, std::string_view key,
+SymPtr<E> get_symbol(Context<E> &ctx, std::string_view key,
                       std::string_view name) {
-  typename decltype(ctx.symbol_map)::const_accessor acc;
-  ctx.symbol_map.insert(acc, {key, Symbol<E>(name)});
-  return const_cast<Symbol<E> *>(&acc->second);
+  typename decltype(ctx.symbol_map)::accessor acc;
+  ctx.symbol_map.insert(acc, {key,  std::make_shared<Symbol<E>>(name)});
+  return acc->second;
+  /*if(auto item = ctx.symbol_map.find(key); item!=ctx.symbol_map.cend()) return item->second;
+  else {
+    using pair_t = std::pair<std::string_view, SymPtr<E>>;
+    return ctx.symbol_map[key] = std::make_shared<Symbol<E>>(name);
+  }*/
 }
 
 template <typename E>
-Symbol<E> *get_symbol(Context<E> &ctx, std::string_view name) {
+SymPtr<E> get_symbol(Context<E> &ctx, std::string_view name) {
   return get_symbol(ctx, name, name);
 }
 
@@ -1974,6 +1981,10 @@ std::ostream &operator<<(std::ostream &out, const Symbol<E> &sym) {
   return out;
 }
 
+template <typename E>
+std::ostream &operator<<(std::ostream &out, const SymPtr<E> &sym) {
+  return out << *sym;
+}
 //
 // Inline objects and functions
 //
@@ -2194,8 +2205,8 @@ InputSection<E>::get_fragment(Context<E> &ctx, const ElfRel<E> &rel) {
 // This function returns a tombstone value for the symbol if the symbol
 // refers a dead debug info section.
 template <typename E>
-inline std::optional<u64> InputSection<E>::get_tombstone(Symbol<E> &sym) {
-  InputSection<E> *isec = sym.get_input_section();
+inline std::optional<u64> InputSection<E>::get_tombstone(SymPtr<E> sym) {
+  InputSection<E> *isec = sym->get_input_section();
 
   // Setting a tombstone is a special feature for a dead debug section.
   if (!isec || isec->is_alive)
@@ -2267,8 +2278,8 @@ inline std::string_view InputFile<E>::get_string(Context<E> &ctx, i64 idx) {
 }
 
 template <typename E>
-inline std::span<Symbol<E> *> InputFile<E>::get_global_syms() {
-  return std::span<Symbol<E> *>(this->symbols).subspan(this->first_global);
+inline std::span<SymPtr<E>> InputFile<E>::get_global_syms() {
+  return std::span<SymPtr<E>>(this->symbols).subspan(this->first_global);
 }
 
 template <typename E>

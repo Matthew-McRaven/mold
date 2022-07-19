@@ -303,7 +303,7 @@ static bool is_file(std::string_view path) {
 }
 
 template <typename E>
-static std::variant<Symbol<E> *, u64>
+static std::variant<std::shared_ptr<Symbol<E>>, u64>
 parse_defsym_value(Context<E> &ctx, std::string_view s) {
   if (s.starts_with("0x") || s.starts_with("0X")) {
     size_t nread;

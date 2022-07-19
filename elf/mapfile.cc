@@ -11,7 +11,7 @@ namespace mold::elf {
 
 template <typename E>
 using Map =
-  std::map<InputSection<E> *, std::vector<Symbol<E> *>>;
+  std::map<InputSection<E> *, std::vector<SymPtr<E> >>;
 
 template <typename E>
 static std::unique_ptr<std::ofstream> open_output_file(Context<E> &ctx) {
@@ -27,7 +27,7 @@ static Map<E> get_map(Context<E> &ctx) {
   Map<E> map;
 
   for(auto file: ctx.objs) {
-    for (Symbol<E> *sym : file->symbols) {
+    for (auto sym : file->symbols) {
       if (sym->file != file || sym->get_type() == STT_SECTION)
         continue;
 
@@ -42,8 +42,8 @@ static Map<E> get_map(Context<E> &ctx) {
     return map;
 
   for(auto it: map) {
-    std::vector<Symbol<E> *> &vec = it.second;
-    sort(vec, [](Symbol<E> *a, Symbol<E> *b) { return a->value < b->value; });
+    std::vector<SymPtr<E> > &vec = it.second;
+    sort(vec, [](SymPtr<E> a, SymPtr<E> b) { return a->value < b->value; });
   }
   return map;
 }
@@ -90,7 +90,7 @@ void print_map(Context<E> &ctx) {
          << "         " << *mem << "\n";
 
       if (auto acc = map.find(mem); acc!=map.end())
-        for (Symbol<E> *sym : acc->second)
+        for (auto sym : acc->second)
           ss << std::showbase
              << std::setw(18) << std::hex << sym->get_addr(ctx) << std::dec
              << "          0     0                 "

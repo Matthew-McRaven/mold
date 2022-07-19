@@ -615,7 +615,7 @@ void icf_sections(Context<E> &ctx) {
   {
     Timer t(ctx, "reassign");
     for(auto* file:ctx.objs) {
-      for (Symbol<E> *sym : file->symbols) {
+      for (auto sym : file->symbols) {
         if (sym->file == file) {
           InputSection<E> *isec = sym->get_input_section();
           if (isec && isec->leader && isec->leader != isec) {

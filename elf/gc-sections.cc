@@ -46,7 +46,7 @@ static void visit(Context<E> &ctx, InputSection<E> *isec,
   // We want to keep associated .eh_frame records.
   for (FdeRecord<E> &fde : isec->get_fdes())
     for (const ElfRel<E> &rel : fde.get_rels(isec->file).subspan(1))
-      if (Symbol<E> *sym = isec->file.symbols[rel.r_sym])
+      if (auto sym = isec->file.symbols[rel.r_sym])
         if (mark_section(sym->get_input_section()))
           feeder.add(sym->get_input_section());
 
@@ -83,7 +83,7 @@ collect_root_set(Context<E> &ctx) {
       rootset.push_back(isec);
   };
 
-  auto enqueue_symbol = [&](Symbol<E> *sym) {
+  auto enqueue_symbol = [&](SymPtr<E> sym) {
     if (sym) {
       if (SectionFragment<E> *frag = sym->get_frag())
         frag->is_alive.store(true, std::memory_order_relaxed);
@@ -114,7 +114,7 @@ collect_root_set(Context<E> &ctx) {
 
   // Add sections containing exported symbols
   tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
-    for (Symbol<E> *sym : file->symbols)
+    for (auto sym : file->symbols)
       if (sym->file == file && sym->is_exported)
         enqueue_symbol(sym);
   });

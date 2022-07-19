@@ -319,7 +319,7 @@ static void show_stats(Context<E> &ctx) {
 
     static Counter removed_comdats("removed_comdat_mem");
     for (auto &pair : obj->comdat_groups)
-      if (ComdatGroup *group = pair.first; group->owner != obj->priority)
+      if (auto group = pair.first; group->owner != obj->priority)
         removed_comdats += pair.second.size();
 
     static Counter num_cies("num_cies");

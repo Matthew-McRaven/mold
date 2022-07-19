@@ -33,7 +33,7 @@ static u32 djb_hash(std::string_view name) {
 template <typename E>
 u64 get_entry_addr(Context<E> &ctx) {
   if (!ctx.arg.entry.empty())
-    if (Symbol<E> *sym = get_symbol(ctx, ctx.arg.entry);
+    if (auto sym = get_symbol(ctx, ctx.arg.entry);
         sym->file && !sym->file->is_dso)
       return sym->get_addr(ctx);
 
@@ -366,10 +366,10 @@ void RelDynSection<E>::copy_buf(Context<E> &ctx) {
   ElfRel<E> *rel = (ElfRel<E> *)(ctx.buf + this->shdr.sh_offset +
                                  ctx.got->get_reldyn_size(ctx));
 
-  for (Symbol<E> *sym : ctx.copyrel->symbols)
+  for (auto sym : ctx.copyrel->symbols)
     *rel++ = reloc<E>(sym->get_addr(ctx), E::R_COPY, sym->get_dynsym_idx(ctx));
 
-  for (Symbol<E> *sym : ctx.copyrel_relro->symbols)
+  for (auto sym : ctx.copyrel_relro->symbols)
     *rel++ = reloc<E>(sym->get_addr(ctx), E::R_COPY, sym->get_dynsym_idx(ctx));
 }
 
@@ -509,8 +509,7 @@ void DynstrSection<E>::copy_buf(Context<E> &ctx) {
 
   if (!ctx.dynsym->symbols.empty()) {
     i64 offset = dynsym_offset;
-    for (Symbol<E> *sym :
-           std::span<Symbol<E> *>(ctx.dynsym->symbols).subspan(1)) {
+    for (auto sym : std::span<SymPtr<E> >(ctx.dynsym->symbols).subspan(1)) {
       write_string(base + offset, sym->name());
       offset += sym->name().size() + 1;
     }
@@ -664,10 +663,10 @@ static std::vector<typename E::WordTy> create_dynamic_section(Context<E> &ctx) {
     define(DT_VERDEFNUM, ctx.verdef->shdr.sh_info);
   }
 
-  if (Symbol<E> *sym = get_symbol(ctx, ctx.arg.init);
+  if (auto sym = get_symbol(ctx, ctx.arg.init);
       sym->file && !sym->file->is_dso)
     define(DT_INIT, sym->get_addr(ctx));
-  if (Symbol<E> *sym = get_symbol(ctx, ctx.arg.fini);
+  if (auto sym = get_symbol(ctx, ctx.arg.fini);
       sym->file && !sym->file->is_dso)
     define(DT_FINI, sym->get_addr(ctx));
 
@@ -958,21 +957,21 @@ void OutputSection<E>::construct_relr(Context<E> &ctx) {
 }
 
 template <typename E>
-void GotSection<E>::add_got_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void GotSection<E>::add_got_symbol(Context<E> &ctx, SymPtr<E> sym) {
   sym->set_got_idx(ctx, this->shdr.sh_size / E::word_size);
   this->shdr.sh_size += E::word_size;
   got_syms.push_back(sym);
 }
 
 template <typename E>
-void GotSection<E>::add_gottp_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void GotSection<E>::add_gottp_symbol(Context<E> &ctx, SymPtr<E> sym) {
   sym->set_gottp_idx(ctx, this->shdr.sh_size / E::word_size);
   this->shdr.sh_size += E::word_size;
   gottp_syms.push_back(sym);
 }
 
 template <typename E>
-void GotSection<E>::add_tlsgd_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void GotSection<E>::add_tlsgd_symbol(Context<E> &ctx, SymPtr<E> sym) {
   sym->set_tlsgd_idx(ctx, this->shdr.sh_size / E::word_size);
   this->shdr.sh_size += E::word_size * 2;
   tlsgd_syms.push_back(sym);
@@ -980,7 +979,7 @@ void GotSection<E>::add_tlsgd_symbol(Context<E> &ctx, Symbol<E> *sym) {
 }
 
 template <typename E>
-void GotSection<E>::add_tlsdesc_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void GotSection<E>::add_tlsdesc_symbol(Context<E> &ctx, SymPtr<E> sym) {
   assert(E::supports_tlsdesc);
   sym->set_tlsdesc_idx(ctx, this->shdr.sh_size / E::word_size);
   this->shdr.sh_size += E::word_size * 2;
@@ -1017,7 +1016,7 @@ template <typename E>
 std::vector<GotEntry<E>> GotSection<E>::get_entries(Context<E> &ctx) const {
   std::vector<GotEntry<E>> entries;
 
-  for (Symbol<E> *sym : got_syms) {
+  for (auto sym : got_syms) {
     i64 idx = sym->get_got_idx(ctx);
 
     // If the symbol may not be defined within our output, let the
@@ -1041,7 +1040,7 @@ std::vector<GotEntry<E>> GotSection<E>::get_entries(Context<E> &ctx) const {
       entries.push_back({idx, sym->get_addr(ctx, false)});
   }
 
-  for (Symbol<E> *sym : tlsgd_syms) {
+  for (auto sym : tlsgd_syms) {
     i64 idx = sym->get_tlsgd_idx(ctx);
 
     if (ctx.arg.is_static) {
@@ -1054,11 +1053,11 @@ std::vector<GotEntry<E>> GotSection<E>::get_entries(Context<E> &ctx) const {
   }
 
   if constexpr (E::supports_tlsdesc)
-    for (Symbol<E> *sym : tlsdesc_syms)
+    for (auto sym : tlsdesc_syms)
       entries.push_back({sym->get_tlsdesc_idx(ctx), 0, E::R_TLSDESC,
                          sym == ctx._TLS_MODULE_BASE_ ? nullptr : sym});
 
-  for (Symbol<E> *sym : gottp_syms) {
+  for (auto sym : gottp_syms) {
     i64 idx = sym->get_gottp_idx(ctx);
 
     // If we know nothing about the symbol, let the dynamic linker
@@ -1142,12 +1141,12 @@ void GotPltSection<E>::copy_buf(Context<E> &ctx) {
       return ctx.plt->shdr.sh_addr;
   };
 
-  for (Symbol<E> *sym : ctx.plt->symbols)
+  for (auto sym : ctx.plt->symbols)
     buf[sym->get_gotplt_idx(ctx)] = get_plt_resolver_addr(*sym);
 }
 
 template <typename E>
-void PltSection<E>::add_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void PltSection<E>::add_symbol(Context<E> &ctx, SymPtr<E> sym) {
   assert(!sym->has_plt(ctx));
 
   if (this->shdr.sh_size == 0)
@@ -1164,7 +1163,7 @@ void PltSection<E>::add_symbol(Context<E> &ctx, Symbol<E> *sym) {
 }
 
 template <typename E>
-void PltGotSection<E>::add_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void PltGotSection<E>::add_symbol(Context<E> &ctx, SymPtr<E> sym) {
   assert(!sym->has_plt(ctx));
   assert(sym->has_got(ctx));
 
@@ -1184,13 +1183,13 @@ void RelPltSection<E>::copy_buf(Context<E> &ctx) {
   ElfRel<E> *buf = (ElfRel<E> *)(ctx.buf + this->shdr.sh_offset);
 
   i64 relplt_idx = 0;
-  for (Symbol<E> *sym : ctx.plt->symbols)
+  for (auto sym : ctx.plt->symbols)
     buf[relplt_idx++] = reloc<E>(sym->get_gotplt_addr(ctx), E::R_JUMP_SLOT,
                                  sym->get_dynsym_idx(ctx));
 }
 
 template <typename E>
-void DynsymSection<E>::add_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void DynsymSection<E>::add_symbol(Context<E> &ctx, SymPtr<E> sym) {
   if (symbols.empty())
     symbols.resize(1);
 
@@ -1209,7 +1208,7 @@ void DynsymSection<E>::finalize(Context<E> &ctx) {
   // We need a stable sort for build reproducibility, but parallel_sort
   // isn't stable, so we use this struct to make it stable.
   struct T {
-    Symbol<E> *sym = nullptr;
+    SymPtr<E> sym = nullptr;
     u32 hash = 0;
     i32 idx = 0;
   };
@@ -1232,14 +1231,14 @@ void DynsymSection<E>::finalize(Context<E> &ctx) {
   }
 
   for(i64 i=1; i<(i64)symbols.size(); i++) {
-    Symbol<E> *sym = symbols[i];
+    auto sym = symbols[i];
     vec[i].sym = sym;
     if (ctx.gnu_hash && sym->is_exported)
       vec[i].hash = djb_hash(sym->name()) % num_buckets;
     vec[i].idx = i;
   };
 
-  auto is_local = [](Symbol<E> *sym) {
+  auto is_local = [](SymPtr<E> sym) {
     return !sym->is_imported && !sym->is_exported;
   };
 
@@ -1344,7 +1343,7 @@ void HashSection<E>::copy_buf(Context<E> &ctx) {
   hdr[0] = hdr[1] = num_slots;
 
   for (i64 i = 1; i < ctx.dynsym->symbols.size(); i++) {
-    Symbol<E> *sym = ctx.dynsym->symbols[i];
+    auto sym = ctx.dynsym->symbols[i];
     i64 idx = elf_hash(sym->name()) % num_slots;
     chains[sym->get_dynsym_idx(ctx)] = buckets[idx];
     buckets[idx] = sym->get_dynsym_idx(ctx);
@@ -1352,10 +1351,10 @@ void HashSection<E>::copy_buf(Context<E> &ctx) {
 }
 
 template <typename E>
-std::span<Symbol<E> *>
+std::span<SymPtr<E> >
 GnuHashSection<E>::get_exported_symbols(Context<E> &ctx) {
-  std::span<Symbol<E> *> syms = ctx.dynsym->symbols;
-  auto it = std::partition_point(syms.begin() + 1, syms.end(), [](Symbol<E> *sym) {
+  std::span<SymPtr<E> > syms = ctx.dynsym->symbols;
+  auto it = std::partition_point(syms.begin() + 1, syms.end(), [](SymPtr<E> sym) {
     return !sym->is_exported;
   });
   return syms.subspan(it - syms.begin());
@@ -1386,7 +1385,7 @@ void GnuHashSection<E>::copy_buf(Context<E> &ctx) {
   u8 *base = ctx.buf + this->shdr.sh_offset;
   memset(base, 0, this->shdr.sh_size);
 
-  std::span<Symbol<E> *> syms = get_exported_symbols(ctx);
+  auto syms = get_exported_symbols(ctx);
   i64 exported_offset = ctx.dynsym->symbols.size() - syms.size();
 
   *(ul32 *)base = num_buckets;
@@ -1737,7 +1736,7 @@ void EhFrameHdrSection<E>::copy_buf(Context<E> &ctx) {
 }
 
 template <typename E>
-void CopyrelSection<E>::add_symbol(Context<E> &ctx, Symbol<E> *sym) {
+void CopyrelSection<E>::add_symbol(Context<E> &ctx, SymPtr<E> sym) {
   if (sym->has_copyrel)
     return;
 
@@ -1788,17 +1787,17 @@ void VerneedSection<E>::construct(Context<E> &ctx) {
     return;
 
   // Create a list of versioned symbols and sort by file and version.
-  std::vector<Symbol<E> *> syms(ctx.dynsym->symbols.begin() + 1,
+  std::vector<SymPtr<E> > syms(ctx.dynsym->symbols.begin() + 1,
                                 ctx.dynsym->symbols.end());
 
-  std::erase_if(syms, [](Symbol<E> *sym) {
+  std::erase_if(syms, [](SymPtr<E> sym) {
     return !sym->file->is_dso || sym->ver_idx <= VER_NDX_LAST_RESERVED;
   });
 
   if (syms.empty())
     return;
 
-  sort(syms, [](Symbol<E> *a, Symbol<E> *b) {
+  sort(syms, [](SymPtr<E> a, SymPtr<E> b) {
     return std::tuple(((SharedFile<E> *)a->file)->soname, a->ver_idx) <
            std::tuple(((SharedFile<E> *)b->file)->soname, b->ver_idx);
   });
@@ -1831,7 +1830,7 @@ void VerneedSection<E>::construct(Context<E> &ctx) {
     aux = nullptr;
   };
 
-  auto add_entry = [&](Symbol<E> *sym) {
+  auto add_entry = [&](SymPtr<E> sym) {
     verneed->vn_cnt++;
 
     if (aux)
@@ -1918,7 +1917,7 @@ void VerdefSection<E>::construct(Context<E> &ctx) {
   for (std::string_view verstr : ctx.arg.version_definitions)
     write(verstr, idx++, 0);
 
-  for (Symbol<E> *sym : std::span<Symbol<E> *>(ctx.dynsym->symbols).subspan(1))
+  for (auto sym : std::span<SymPtr<E> >(ctx.dynsym->symbols).subspan(1))
     ctx.versym->contents[sym->get_dynsym_idx(ctx)] = sym->ver_idx;
 }
 

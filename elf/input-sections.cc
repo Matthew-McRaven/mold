@@ -122,24 +122,24 @@ static i64 get_output_type(Context<E> &ctx) {
 }
 
 template <typename E>
-static i64 get_sym_type(Symbol<E> &sym) {
-  if (sym.is_absolute())
+static i64 get_sym_type(SymPtr<E> sym) {
+  if (sym->is_absolute())
     return 0;
-  if (!sym.is_imported)
+  if (!sym->is_imported)
     return 1;
-  if (sym.get_type() != STT_FUNC)
+  if (sym->get_type() != STT_FUNC)
     return 2;
   return 3;
 }
 
 template <typename E>
 void InputSection<E>::dispatch(Context<E> &ctx, Action table[3][4], i64 i,
-                               const ElfRel<E> &rel, Symbol<E> &sym) {
+                               const ElfRel<E> &rel, SymPtr<E> sym) {
   Action action = table[get_output_type(ctx)][get_sym_type(sym)];
   bool is_writable = (shdr().sh_flags & SHF_WRITE);
 
   auto error = [&] {
-    std::string msg = sym.is_absolute() ? "-fno-PIC" : "-fPIC";
+    std::string msg = sym->is_absolute() ? "-fno-PIC" : "-fPIC";
     Error(ctx) << *this << ": " << rel << " relocation at offset 0x"
                << std::hex << rel.r_offset << " against symbol `"
                << sym << "' can not be used; recompile with " << msg;
@@ -163,23 +163,23 @@ void InputSection<E>::dispatch(Context<E> &ctx, Action table[3][4], i64 i,
       return;
     }
 
-    if (sym.esym().st_visibility == STV_PROTECTED) {
+    if (sym->esym().st_visibility == STV_PROTECTED) {
       Error(ctx) << *this
                  << ": cannot make copy relocation for protected symbol '"
-                 << sym << "', defined in " << *sym.file
+                 << sym << "', defined in " << sym->file
                  << "; recompile with -fPIC";
       return;
     }
 
-    sym.flags |= NEEDS_COPYREL;
+    sym->flags |= NEEDS_COPYREL;
     return;
   case PLT:
-    sym.flags |= NEEDS_PLT;
+    sym->flags |= NEEDS_PLT;
     return;
   case CPLT: {
-    std::scoped_lock lock(sym.mu);
-    sym.flags |= NEEDS_PLT;
-    sym.is_canonical = true;
+    std::scoped_lock lock(sym->mu);
+    sym->flags |= NEEDS_PLT;
+    sym->is_canonical = true;
     return;
   }
   case DYNREL:
@@ -192,7 +192,7 @@ void InputSection<E>::dispatch(Context<E> &ctx, Action table[3][4], i64 i,
       ctx.has_textrel = true;
     }
 
-    assert(sym.is_imported);
+    assert(sym->is_imported);
     file.num_dynrel++;
     return;
   case BASEREL:
@@ -263,11 +263,12 @@ void InputSection<E>::record_undef_error(Context<E> &ctx, const ElfRel<E> &rel) 
   if (std::string_view func = get_func_name(ctx, rel.r_offset); !func.empty())
     ss << ":(" << func << ")";
 
-  Symbol<E> &sym = *file.symbols[rel.r_sym];
+  auto sym = file.symbols[rel.r_sym];
 
-  typename decltype(ctx.undef_errors)::accessor acc;
-  ctx.undef_errors.insert(acc, {sym.name(), {}});
-  acc->second.push_back(ss.str());
+  /*using pair_t = decltype(ctx.undef_errors)::value_type;
+  ctx.undef_errors.insert(pair_t({sym->name(), {ss.str()}}));*/
+  typename decltype(ctx.undef_errors)::const_accessor acc;
+  ctx.undef_errors.insert(acc, {sym->name(), {ss.str()}});
 }
 
 // Report all undefined symbols, grouped by symbol.

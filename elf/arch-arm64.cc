@@ -44,8 +44,8 @@ static void write_plt_header(Context<E> &ctx, u8 *buf) {
   *(ul32 *)(buf + 12) |= (gotplt & 0xfff) << 10;
 }
 
-static void write_plt_entry(Context<E> &ctx, u8 *buf, Symbol<E> &sym) {
-  u8 *ent = buf + E::plt_hdr_size + sym.get_plt_idx(ctx) * E::plt_size;
+static void write_plt_entry(Context<E> &ctx, u8 *buf, SymPtr<E> sym) {
+  u8 *ent = buf + E::plt_hdr_size + sym->get_plt_idx(ctx) * E::plt_size;
 
   static const u32 data[] = {
     0x90000010, // adrp x16, .got.plt[n]
@@ -54,8 +54,8 @@ static void write_plt_entry(Context<E> &ctx, u8 *buf, Symbol<E> &sym) {
     0xd61f0220, // br   x17
   };
 
-  u64 gotplt = sym.get_gotplt_addr(ctx);
-  u64 plt = sym.get_plt_addr(ctx);
+  u64 gotplt = sym->get_gotplt_addr(ctx);
+  u64 plt = sym->get_plt_addr(ctx);
 
   memcpy(ent, data, sizeof(data));
   write_adrp(ent, page(gotplt) - page(plt));
@@ -67,15 +67,15 @@ template <>
 void PltSection<E>::copy_buf(Context<E> &ctx) {
   u8 *buf = ctx.buf + this->shdr.sh_offset;
   write_plt_header(ctx, buf);
-  for (Symbol<E> *sym : symbols)
-    write_plt_entry(ctx, buf, *sym);
+  for (SymPtr<E> sym : symbols)
+    write_plt_entry(ctx, buf, sym);
 }
 
 template <>
 void PltGotSection<E>::copy_buf(Context<E> &ctx) {
   u8 *buf = ctx.buf + this->shdr.sh_offset;
 
-  for (Symbol<E> *sym : symbols) {
+  for (auto sym : symbols) {
     u8 *ent = buf + sym->get_pltgot_idx(ctx) * ARM64::pltgot_size;
 
     static const u32 data[] = {
@@ -129,7 +129,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
     if (rel.r_type == R_AARCH64_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     u8 *loc = base + rel.r_offset;
 
     const SectionFragmentRef<E> *frag_ref = nullptr;
@@ -143,18 +143,18 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
                    << lo << ", " << hi << ")";
     };
 
-#define S   (frag_ref ? frag_ref->frag->get_addr(ctx) : sym.get_addr(ctx))
+#define S   (frag_ref ? frag_ref->frag->get_addr(ctx) : sym->get_addr(ctx))
 #define A   (frag_ref ? (u64)frag_ref->addend : (u64)rel.r_addend)
 #define P   (output_section->shdr.sh_addr + offset + rel.r_offset)
-#define G   (sym.get_got_addr(ctx) - ctx.got->shdr.sh_addr)
+#define G   (sym->get_got_addr(ctx) - ctx.got->shdr.sh_addr)
 #define GOT ctx.got->shdr.sh_addr
 
     switch (rel.r_type) {
     case R_AARCH64_ABS64:
-      if (sym.is_absolute() || !ctx.arg.pic) {
+      if (sym->is_absolute() || !ctx.arg.pic) {
         *(ul64 *)loc = S + A;
-      } else if (sym.is_imported) {
-        *dynrel++ = {P, R_AARCH64_ABS64, (u32)sym.get_dynsym_idx(ctx), A};
+      } else if (sym->is_imported) {
+        *dynrel++ = {P, R_AARCH64_ABS64, (u32)sym->get_dynsym_idx(ctx), A};
         *(ul64 *)loc = A;
       } else {
         if (!is_relr_reloc(ctx, rel))
@@ -215,7 +215,7 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
     }
     case R_AARCH64_CALL26:
     case R_AARCH64_JUMP26: {
-      if (sym.esym().is_undef_weak()) {
+      if (sym->esym().is_undef_weak()) {
         // On ARM, calling an weak undefined symbol jumps to the
         // next instruction.
         *(ul32 *)loc |= 1;
@@ -267,13 +267,13 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       continue;
     }
     case R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21: {
-      i64 val = page(sym.get_gottp_addr(ctx) + A) - page(P);
+      i64 val = page(sym->get_gottp_addr(ctx) + A) - page(P);
       overflow_check(val, -((i64)1 << 32), (i64)1 << 32);
       write_adrp(loc, val);
       continue;
     }
     case R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC:
-      *(ul32 *)loc |= bits(sym.get_gottp_addr(ctx) + A, 11, 3) << 10;
+      *(ul32 *)loc |= bits(sym->get_gottp_addr(ctx) + A, 11, 3) << 10;
       continue;
     case R_AARCH64_TLSLE_ADD_TPREL_HI12: {
       i64 val = S + A - ctx.tls_begin + 16;
@@ -286,46 +286,46 @@ void InputSection<E>::apply_reloc_alloc(Context<E> &ctx, u8 *base) {
       *(ul32 *)loc |= bits(S + A - ctx.tls_begin + 16, 11, 0) << 10;
       continue;
     case R_AARCH64_TLSGD_ADR_PAGE21: {
-      i64 val = page(sym.get_tlsgd_addr(ctx) + A) - page(P);
+      i64 val = page(sym->get_tlsgd_addr(ctx) + A) - page(P);
       overflow_check(val, -((i64)1 << 32), (i64)1 << 32);
       write_adrp(loc, val);
       continue;
     }
     case R_AARCH64_TLSGD_ADD_LO12_NC:
-      *(ul32 *)loc |= bits(sym.get_tlsgd_addr(ctx) + A, 11, 0) << 10;
+      *(ul32 *)loc |= bits(sym->get_tlsgd_addr(ctx) + A, 11, 0) << 10;
       continue;
     case R_AARCH64_TLSDESC_ADR_PAGE21: {
-      if (ctx.relax_tlsdesc && !sym.is_imported) {
+      if (ctx.relax_tlsdesc && !sym->is_imported) {
         // adrp x0, 0 -> movz x0, #tls_ofset_hi, lsl #16
         i64 val = (S + A - ctx.tls_begin + 16);
         overflow_check(val, -((i64)1 << 32), (i64)1 << 32);
         *(ul32 *)loc = 0xd2a00000 | (bits(val, 32, 16) << 5);
       } else {
-        i64 val = page(sym.get_tlsdesc_addr(ctx) + A) - page(P);
+        i64 val = page(sym->get_tlsdesc_addr(ctx) + A) - page(P);
         overflow_check(val, -((i64)1 << 32), (i64)1 << 32);
         write_adrp(loc, val);
       }
       continue;
     }
     case R_AARCH64_TLSDESC_LD64_LO12:
-      if (ctx.relax_tlsdesc && !sym.is_imported) {
+      if (ctx.relax_tlsdesc && !sym->is_imported) {
         // ldr x2, [x0] -> movk x0, #tls_ofset_lo
         u32 offset_lo = (S + A - ctx.tls_begin + 16) & 0xffff;
         *(ul32 *)loc = 0xf2800000 | (offset_lo << 5);
       } else {
-        *(ul32 *)loc |= bits(sym.get_tlsdesc_addr(ctx) + A, 11, 3) << 10;
+        *(ul32 *)loc |= bits(sym->get_tlsdesc_addr(ctx) + A, 11, 3) << 10;
       }
       continue;
     case R_AARCH64_TLSDESC_ADD_LO12:
-      if (ctx.relax_tlsdesc && !sym.is_imported) {
+      if (ctx.relax_tlsdesc && !sym->is_imported) {
         // add x0, x0, #0 -> nop
         *(ul32 *)loc = 0xd503201f;
       } else {
-        *(ul32 *)loc |= bits(sym.get_tlsdesc_addr(ctx) + A, 11, 0) << 10;
+        *(ul32 *)loc |= bits(sym->get_tlsdesc_addr(ctx) + A, 11, 0) << 10;
       }
       continue;
     case R_AARCH64_TLSDESC_CALL:
-      if (ctx.relax_tlsdesc && !sym.is_imported) {
+      if (ctx.relax_tlsdesc && !sym->is_imported) {
         // blr x2 -> nop
         *(ul32 *)loc = 0xd503201f;
       }
@@ -351,10 +351,10 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
     if (rel.r_type == R_AARCH64_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
     u8 *loc = base + rel.r_offset;
 
-    if (!sym.file) {
+    if (!sym->file) {
       record_undef_error(ctx, rel);
       continue;
     }
@@ -363,7 +363,7 @@ void InputSection<E>::apply_reloc_nonalloc(Context<E> &ctx, u8 *base) {
     i64 addend;
     std::tie(frag, addend) = get_fragment(ctx, rel);
 
-#define S (frag ? frag->get_addr(ctx) : sym.get_addr(ctx))
+#define S (frag ? frag->get_addr(ctx) : sym->get_addr(ctx))
 #define A (frag ? (u64)addend : (u64)rel.r_addend)
 
     switch (rel.r_type) {
@@ -403,16 +403,16 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
     if (rel.r_type == R_AARCH64_NONE)
       continue;
 
-    Symbol<E> &sym = *file.symbols[rel.r_sym];
+    auto sym = file.symbols[rel.r_sym];
 
-    if (!sym.file) {
+    if (!sym->file) {
       record_undef_error(ctx, rel);
       continue;
     }
 
-    if (sym.get_type() == STT_GNU_IFUNC) {
-      sym.flags |= NEEDS_GOT;
-      sym.flags |= NEEDS_PLT;
+    if (sym->get_type() == STT_GNU_IFUNC) {
+      sym->flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_PLT;
     }
 
     switch (rel.r_type) {
@@ -429,16 +429,16 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
     case R_AARCH64_ADR_GOT_PAGE:
     case R_AARCH64_LD64_GOT_LO12_NC:
     case R_AARCH64_LD64_GOTPAGE_LO15:
-      sym.flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_GOT;
       break;
     case R_AARCH64_CALL26:
     case R_AARCH64_JUMP26:
-      if (sym.is_imported)
-        sym.flags |= NEEDS_PLT;
+      if (sym->is_imported)
+        sym->flags |= NEEDS_PLT;
       break;
     case R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21:
     case R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC:
-      sym.flags |= NEEDS_GOTTP;
+      sym->flags |= NEEDS_GOTTP;
       break;
     case R_AARCH64_ADR_PREL_PG_HI21: {
       Action table[][4] = {
@@ -451,13 +451,13 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
       break;
     }
     case R_AARCH64_TLSGD_ADR_PAGE21:
-      sym.flags |= NEEDS_TLSGD;
+      sym->flags |= NEEDS_TLSGD;
       break;
     case R_AARCH64_TLSDESC_ADR_PAGE21:
     case R_AARCH64_TLSDESC_LD64_LO12:
     case R_AARCH64_TLSDESC_ADD_LO12:
-      if (!ctx.relax_tlsdesc || sym.is_imported)
-        sym.flags |= NEEDS_TLSDESC;
+      if (!ctx.relax_tlsdesc || sym->is_imported)
+        sym->flags |= NEEDS_TLSDESC;
       break;
     case R_AARCH64_ADD_ABS_LO12_NC:
     case R_AARCH64_ADR_PREL_LO21:
@@ -491,22 +491,22 @@ void InputSection<E>::scan_relocations(Context<E> &ctx) {
 }
 
 static void reset_thunk(RangeExtensionThunk<E> &thunk) {
-  for (Symbol<E> *sym : thunk.symbols) {
+  for (auto sym : thunk.symbols) {
     sym->extra.thunk_idx = -1;
     sym->extra.thunk_sym_idx = -1;
     sym->flags &= (u8)~NEEDS_RANGE_EXTN_THUNK;
   }
 }
 
-static bool is_reachable(Context<E> &ctx, Symbol<E> &sym,
+static bool is_reachable(Context<E> &ctx, SymPtr<E> sym,
                          InputSection<E> &isec, const ElfRel<E> &rel) {
   // We pessimistically assume that PLT entries are unreacahble.
-  if (sym.has_plt(ctx))
+  if (sym->has_plt(ctx))
     return false;
 
   // We create thunks with a pessimistic assumption that all
   // out-of-section relocations would be out-of-range.
-  InputSection<E> *isec2 = sym.get_input_section();
+  InputSection<E> *isec2 = sym->get_input_section();
   if (!isec2 || isec.output_section != isec2->output_section)
     return false;
 
@@ -515,7 +515,7 @@ static bool is_reachable(Context<E> &ctx, Symbol<E> &sym,
 
   // Compute a distance between the relocated place and the symbol
   // and check if they are within reach.
-  i64 S = sym.get_addr(ctx);
+  i64 S = sym->get_addr(ctx);
   i64 A = rel.r_addend;
   i64 P = isec.get_addr() + rel.r_offset;
   i64 val = S + A - P;
@@ -597,10 +597,10 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
         if (rel.r_type != R_AARCH64_CALL26 && rel.r_type != R_AARCH64_JUMP26)
           continue;
 
-        Symbol<E> &sym = *isec->file.symbols[rel.r_sym];
+        auto sym = isec->file.symbols[rel.r_sym];
 
         // Skip if the symbol is undefined. apply_reloc() will report an error.
-        if (!sym.file)
+        if (!sym->file)
           continue;
 
         // Skip if the destination is within reach.
@@ -608,18 +608,17 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
           continue;
 
         // If the symbol is already in another thunk, reuse it.
-        if (sym.extra.thunk_idx != -1) {
-          range_extn[i] = {sym.extra.thunk_idx, sym.extra.thunk_sym_idx};
+        if (sym->extra.thunk_idx != -1) {
+          range_extn[i] = {sym->extra.thunk_idx, sym->extra.thunk_sym_idx};
           continue;
         }
 
         // Otherwise, add the symbol to this thunk if it's not added already.
         range_extn[i] = {thunk.thunk_idx, -1};
 
-        if (!(sym.flags.fetch_or(NEEDS_RANGE_EXTN_THUNK) &
+        if (!(sym->flags.fetch_or(NEEDS_RANGE_EXTN_THUNK) &
               NEEDS_RANGE_EXTN_THUNK)) {
-          std::scoped_lock lock(thunk.mu);
-          thunk.symbols.push_back(&sym);
+          thunk.symbols.push_back(sym);
         }
       }
     };
@@ -629,13 +628,13 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
     offset += thunk.size();
 
     // Sort symbols added to the thunk to make the output deterministic.
-    sort(thunk.symbols, [](Symbol<E> *a, Symbol<E> *b) {
+    sort(thunk.symbols, [](SymPtr<E> a, SymPtr<E> b) {
       return std::tuple{a->file->priority, a->sym_idx} <
              std::tuple{b->file->priority, b->sym_idx};
     });
 
     // Assign offsets within the thunk to the symbols.
-    for (i64 i = 0; Symbol<E> *sym : thunk.symbols) {
+    for (i64 i = 0; auto sym : thunk.symbols) {
       sym->extra.thunk_idx = thunk.thunk_idx;
       sym->extra.thunk_sym_idx = i++;
     }
@@ -648,8 +647,8 @@ void create_range_extension_thunks(Context<E> &ctx, OutputSection<E> &osec) {
       for (i64 i = 0; i < rels.size(); i++) {
         std::vector<RangeExtensionRef> &range_extn = isec->extra.range_extn;
         if (range_extn[i].thunk_idx == thunk.thunk_idx) {
-          Symbol<E> &sym = *isec->file.symbols[rels[i].r_sym];
-          range_extn[i].sym_idx = sym.extra.thunk_sym_idx;
+          auto sym = isec->file.symbols[rels[i].r_sym];
+          range_extn[i].sym_idx = sym->extra.thunk_sym_idx;
         }
       }
     };
