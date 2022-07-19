@@ -21,29 +21,29 @@ variables:
 test:x86_64: 
   <<: *setup
   script:
-    - cmake -B build && cd build && make -j4
+    - (cmake -B build && cd build && make -j4)
     - make -j 4 test-arch TRIPLE=x86_64-linux-gnu MACHINE=x86_64
 
 test:i686:
   <<: *setup
   script:
-    - cmake -B build && cd build && make -j4
+    - (cmake -B build && cd build && make -j4)
     - make -j 4 test-arch TRIPLE=i686-linux-gnu MACHINE=i386
 
 test:aarch64:
   <<: *setup
   script:
-   - cmake -B build && cd build && make -j4
-    - make -j 4 test-arch TRIPLE=aarch64-linux-gnu MACHINE=aarch64
+   - (cmake -B build && cd build && make -j4)
+   - make -j 4 test-arch TRIPLE=aarch64-linux-gnu MACHINE=aarch64
 
 test:arm32:
   <<: *setup
   script:
-    - cmake -B build && cd build && make -j4
+    - (cmake -B build && cd build && make -j4)
     - make -j 4 test-arch TRIPLE=arm-linux-gnueabihf MACHINE=arm
 
 test:riscv64:
   <<: *setup
   script:
-    - cmake -B build && cd build && make -j4
+    - (cmake -B build && cd build && make -j4)
     - make -j 4 test-arch TRIPLE=riscv64-linux-gnu MACHINE=riscv64
