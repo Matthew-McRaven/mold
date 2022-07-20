@@ -5,7 +5,6 @@
 #include <numeric>
 #include <shared_mutex>
 #include <sys/mman.h>
-#include <tbb/parallel_scan.h>
 
 namespace mold::elf {
 
