@@ -2163,7 +2163,7 @@ void GdbIndexSection<E>::construct(Context<E> &ctx) {
   // Uniquify pubnames by inserting all name strings into a concurrent
   // hashmap.
   map.resize(estimator.get_cardinality() * 2);
-  tbb::enumerable_thread_specific<i64> num_names;
+  i64 num_names = 0;
 
   for(auto file : ctx.objs) {
     for (GdbIndexName &name : file->gdb_names) {
@@ -2171,7 +2171,7 @@ void GdbIndexSection<E>::construct(Context<E> &ctx) {
       bool inserted;
       std::tie(ent, inserted) = map.insert(name.name, name.hash, {file, name.hash});
       if (inserted)
-        num_names.local()++;
+        num_names++;
 
       ObjectFile<E> *old_val = ent->owner;
       while (file->priority < old_val->priority &&
@@ -2211,7 +2211,7 @@ void GdbIndexSection<E>::construct(Context<E> &ctx) {
   // pubtypes. We aim 75% utilization. As per the format specification,
   // It must be a power of two.
   i64 num_symtab_entries =
-    std::max<i64>(bit_ceil(num_names.combine(std::plus()) * 4 / 3), 16);
+    std::max<i64>(bit_ceil((u64) num_names * 4 / 3), 16);
 
   // Now that we can compute the size of this section.
   ObjectFile<E> &last = *ctx.objs.back();
