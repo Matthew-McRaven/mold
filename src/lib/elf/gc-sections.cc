@@ -4,9 +4,7 @@
 
 #include "mold.h"
 
-#include <tbb/concurrent_vector.h>
-#include <tbb/parallel_for_each.h>
-
+#include <list>
 namespace mold::elf {
 
 template <typename E>
@@ -31,7 +29,7 @@ static bool mark_section(InputSection<E> *isec) {
 
 template <typename E>
 static void visit(Context<E> &ctx, InputSection<E> *isec,
-                  tbb::feeder<InputSection<E> *> &feeder, i64 depth) {
+                  std::list<InputSection<E> *> &feeder, i64 depth) {
   assert(isec->is_visited);
 
   // A relocation can refer either a section fragment (i.e. a piece of
@@ -48,9 +46,9 @@ static void visit(Context<E> &ctx, InputSection<E> *isec,
     for (const ElfRel<E> &rel : fde.get_rels(isec->file).subspan(1))
       if (auto sym = isec->file.symbols[rel.r_sym])
         if (mark_section(sym->get_input_section()))
-          feeder.add(sym->get_input_section());
+          feeder.push_back(sym->get_input_section());
 
-  for (const ElfRel<E> &rel : isec->get_rels(ctx)) {
+  for (const auto& rel : isec->get_rels(ctx)) {
     Symbol<E> &sym = *isec->file.symbols[rel.r_sym];
 
     // Symbol can refer either a section fragment or an input section.
@@ -68,15 +66,15 @@ static void visit(Context<E> &ctx, InputSection<E> *isec,
     if (depth < 3)
       visit(ctx, sym.get_input_section(), feeder, depth + 1);
     else
-      feeder.add(sym.get_input_section());
+      feeder.push_back(sym.get_input_section());
   }
 }
 
 template <typename E>
-static tbb::concurrent_vector<InputSection<E> *>
+static std::list<InputSection<E> *>
 collect_root_set(Context<E> &ctx) {
   Timer t(ctx, "collect_root_set");
-  tbb::concurrent_vector<InputSection<E> *> rootset;
+  std::list<InputSection<E> *> rootset;
 
   auto enqueue_section = [&](InputSection<E> *isec) {
     if (mark_section(isec))
@@ -93,7 +91,7 @@ collect_root_set(Context<E> &ctx) {
   };
 
   // Add sections that are not subject to garbage collection.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (std::unique_ptr<InputSection<E>> &isec : file->sections) {
       if (!isec || !isec->is_alive)
         continue;
@@ -110,14 +108,14 @@ collect_root_set(Context<E> &ctx) {
           (flags & SHF_GNU_RETAIN) || isec->shdr().sh_type == SHT_NOTE)
         enqueue_section(isec.get());
     }
-  });
+  };
 
   // Add sections containing exported symbols
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (auto sym : file->symbols)
       if (sym->file == file && sym->is_exported)
         enqueue_symbol(sym);
-  });
+  };
 
   // Add sections referenced by root symbols.
   enqueue_symbol(get_symbol(ctx, ctx.arg.entry));
@@ -131,11 +129,11 @@ collect_root_set(Context<E> &ctx) {
   // .eh_frame consists of variable-length records called CIE and FDE
   // records, and they are a unit of inclusion or exclusion.
   // We just keep all CIEs and everything that are referenced by them.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (CieRecord<E> &cie : file->cies)
       for (const ElfRel<E> &rel : cie.get_rels())
         enqueue_symbol(file->symbols[rel.r_sym]);
-  });
+  };
 
   return rootset;
 }
@@ -143,13 +141,10 @@ collect_root_set(Context<E> &ctx) {
 // Mark all reachable sections
 template <typename E>
 static void mark(Context<E> &ctx,
-                 tbb::concurrent_vector<InputSection<E> *> &rootset) {
+                 std::list<InputSection<E> *> &rootset) {
   Timer t(ctx, "mark");
-
-  tbb::parallel_for_each(rootset, [&](InputSection<E> *isec,
-                                    tbb::feeder<InputSection<E> *> &feeder) {
-    visit(ctx, isec, feeder, 0);
-  });
+  // By comparing to end at each iteration, we can append freely.
+  for(auto it = rootset.begin(); it != rootset.end(); it++) visit(ctx, *it, rootset, 0);
 }
 
 // Remove unreachable sections
@@ -158,7 +153,7 @@ static void sweep(Context<E> &ctx) {
   Timer t(ctx, "sweep");
   static Counter counter("garbage_sections");
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (std::unique_ptr<InputSection<E>> &isec : file->sections) {
       if (isec && isec->is_alive && !isec->is_visited) {
         if (ctx.arg.print_gc_sections)
@@ -167,7 +162,7 @@ static void sweep(Context<E> &ctx) {
         counter++;
       }
     }
-  });
+  };
 }
 
 // Non-alloc section fragments are not subject of garbage collection.
@@ -176,13 +171,13 @@ template <typename E>
 static void mark_nonalloc_fragments(Context<E> &ctx) {
   Timer t(ctx, "mark_nonalloc_fragments");
 
-  tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+  for(auto file : ctx.objs) {
     for (std::unique_ptr<MergeableSection<E>> &m : file->mergeable_sections)
       if (m)
         for (SectionFragment<E> *frag : m->fragments)
           if (!(frag->output_section.shdr.sh_flags & SHF_ALLOC))
             frag->is_alive.store(true, std::memory_order_relaxed);
-  });
+  };
 }
 
 template <typename E>
@@ -191,7 +186,7 @@ void gc_sections(Context<E> &ctx) {
 
   mark_nonalloc_fragments(ctx);
 
-  tbb::concurrent_vector<InputSection<E> *> rootset = collect_root_set(ctx);
+  auto rootset = collect_root_set(ctx);
   mark(ctx, rootset);
   sweep(ctx);
 }
