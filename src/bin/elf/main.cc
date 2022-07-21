@@ -10,8 +10,6 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <tbb/global_control.h>
-#include <tbb/parallel_for_each.h>
 #include <unistd.h>
 #include <unordered_set>
 
@@ -410,9 +408,6 @@ static int elf_main(int argc, char **argv) {
   // Fork a subprocess unless --no-fork is given.
   std::function<void()> on_complete = [](){};
   
-  tbb::global_control tbb_cont(tbb::global_control::max_allowed_parallelism,
-                               ctx.arg.thread_count);
-
   // Handle --wrap options if any.
   for (std::string_view name : ctx.arg.wrap)
     get_symbol(ctx, name)->wrap = true;
@@ -669,12 +664,12 @@ static int elf_main(int argc, char **argv) {
   {
     Timer t(ctx, "copy_buf");
 
-    tbb::parallel_for_each(ctx.chunks, [&](Chunk<E> *chunk) {
+    for(auto chunk: ctx.chunks) {
       std::string name =
         chunk->name.empty() ? "(header)" : std::string(chunk->name);
       Timer t2(ctx, name, &t);
       chunk->copy_buf(ctx);
-    });
+    };
 
     report_undef_errors(ctx);
   }
