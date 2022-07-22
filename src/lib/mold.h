@@ -21,8 +21,6 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <tbb/concurrent_vector.h>
-#include <tbb/enumerable_thread_specific.h>
 #include <unistd.h>
 #include <vector>
 
