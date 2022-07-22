@@ -1582,7 +1582,6 @@ struct Context {
   bool in_lib = false;
   i64 file_priority = 10000;
   std::unordered_set<std::string_view> visited;
-  tbb::task_group tg;
 
   bool has_error = false;
   bool has_lto_object = false;
@@ -1829,7 +1828,7 @@ public:
   // `flags` has NEEDS_ flags.
   std::atomic_uint8_t flags = 0;
 
-  tbb::spin_mutex mu;
+  std::mutex mu;
   std::atomic_uint8_t visibility = STV_DEFAULT;
 
   bool is_weak : 1 = false;
