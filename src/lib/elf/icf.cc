@@ -70,9 +70,6 @@
 #include <array>
 #include <numeric>
 #include <cstdio>
-#include <tbb/concurrent_unordered_map.h>
-#include <tbb/concurrent_vector.h>
-#include <tbb/enumerable_thread_specific.h>
 
 static constexpr int64_t HASH_SIZE = 16;
 
@@ -205,7 +202,7 @@ static void merge_leaf_nodes(Context<E> &ctx) {
   static Counter non_eligible("icf_non_eligibles");
   static Counter leaf("icf_leaf_nodes");
 
-  tbb::concurrent_unordered_map<InputSection<E> *, InputSection<E> *,
+  std::unordered_map<InputSection<E> *, InputSection<E> *,
                                 LeafHasher<E>, LeafEq<E>> map;
 
   for(i64 i=0; i<(i64)ctx.objs.size(); i++) {
@@ -468,18 +465,18 @@ static i64 count_num_classes(std::span<Digest> digests) {
   std::vector<Digest> vec(digests.begin(), digests.end());
   std::sort(vec.begin(), vec.end());
 
-  tbb::enumerable_thread_specific<i64> num_classes;
+  i64 num_classes = 0;
   for(i64 i=0; i<(i64)vec.size() - 1;i++) {
     if (vec[i] != vec[i + 1])
-      num_classes.local()++;
+      num_classes++;
   };
-  return num_classes.combine(std::plus());
+  return num_classes;
 }
 
 template <typename E>
 static void print_icf_sections(Context<E> &ctx) {
-  tbb::concurrent_vector<InputSection<E> *> leaders;
-  tbb::concurrent_unordered_multimap<InputSection<E> *, InputSection<E> *> map;
+  std::vector<InputSection<E> *> leaders;
+  std::unordered_multimap<InputSection<E> *, InputSection<E> *> map;
 
   for(auto file:ctx.objs) {
     for (std::unique_ptr<InputSection<E>> &isec : file->sections) {
@@ -588,7 +585,7 @@ void icf_sections(Context<E> &ctx) {
   {
     Timer t(ctx, "group");
 
-    auto *map = new tbb::concurrent_unordered_map<Digest, InputSection<E> *>;
+    auto *map = new std::unordered_map<Digest, InputSection<E> *>;
     std::span<Digest> digest = digests[slot];
 
     for(i64 i=0; i<(i64)sections.size(); i++) {
