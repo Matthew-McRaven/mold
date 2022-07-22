@@ -9,7 +9,7 @@
 namespace mold {
 
 i64 Counter::get_value() {
-  return values.combine(std::plus());
+  return values;
 }
 
 void Counter::print() {

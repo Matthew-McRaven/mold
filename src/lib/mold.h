@@ -602,13 +602,13 @@ public:
 
   Counter &operator++(int) {
     if (enabled)
-      values.local()++;
+      values++;
     return *this;
   }
 
   Counter &operator+=(int delta) {
     if (enabled)
-      values.local() += delta;
+      values += delta;
     return *this;
   }
 
@@ -620,7 +620,7 @@ private:
   i64 get_value();
 
   std::string_view name;
-  tbb::enumerable_thread_specific<i64> values;
+  i64 values=0;
 
   static inline std::vector<Counter *> instances;
 };
