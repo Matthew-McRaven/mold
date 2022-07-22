@@ -1596,7 +1596,7 @@ struct Context {
   FileCache<E, ObjectFile<E>> obj_cache;
   FileCache<E, SharedFile<E>> dso_cache;
 
-  tbb::concurrent_vector<std::unique_ptr<TimerRecord>> timer_records;
+  std::vector<std::unique_ptr<TimerRecord>> timer_records;
   tbb::concurrent_vector<std::function<void()>> on_exit;
 
   tbb::concurrent_vector<std::unique_ptr<ObjectFile<E>>> obj_pool;

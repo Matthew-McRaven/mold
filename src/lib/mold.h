@@ -633,7 +633,7 @@ struct TimerRecord {
 
   std::string name;
   TimerRecord *parent;
-  tbb::concurrent_vector<TimerRecord *> children;
+  std::vector<TimerRecord *> children;
   i64 start;
   i64 end;
   i64 user;
@@ -642,7 +642,7 @@ struct TimerRecord {
 };
 
 void
-print_timer_records(tbb::concurrent_vector<std::unique_ptr<TimerRecord>> &);
+print_timer_records(std::vector<std::unique_ptr<TimerRecord>> &);
 
 template <typename C>
 class Timer {
