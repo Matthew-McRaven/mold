@@ -158,15 +158,10 @@ void ObjectFile<E>::initialize_sections(Context<E> &ctx) {
       if (entries[0] != GRP_COMDAT)
         Fatal(ctx) << *this << ": unsupported SHT_GROUP format";
 
-      typename decltype(ctx.comdat_groups)::accessor acc;
-      ctx.comdat_groups.insert(acc, {signature, std::make_shared<ComdatGroup>()});
-      auto group = acc->second;
+      if(const auto item = ctx.comdat_groups.find(signature); item == ctx.comdat_groups.cend())
+        ctx.comdat_groups[signature] = std::make_shared<ComdatGroup>();
+      auto group = ctx.comdat_groups[signature];
       comdat_groups.push_back({group, entries.subspan(1)});
-
-      /*using pair_t = decltype(ctx.comdat_groups)::value_type;
-      auto group = std::make_shared<ComdatGroup>();
-      comdat_groups.push_back({group, entries.subspan(1)});
-      ctx.comdat_groups.insert(pair_t({signature, group}));*/
       break;
     }
     case SHT_SYMTAB_SHNDX:
@@ -999,11 +994,9 @@ void ObjectFile<E>::claim_unresolved_symbols(Context<E> &ctx) {
     else
       ss << ">>> referenced by " << *this << "\n";
 
-    //using pair_t = decltype(ctx.undef_errors)::value_type;
-    //ctx.undef_errors.insert(pair_t({sym->name(), {ss.str()}}));
-    typename decltype(ctx.undef_errors)::accessor acc;
-    ctx.undef_errors.insert(acc, {sym->name(), {}});
-    acc->second.push_back(ss.str());
+    if(const auto item = ctx.undef_errors.find(sym->name()); item == ctx.undef_errors.cend())
+      ctx.undef_errors[sym->name()] = {};
+    ctx.undef_errors[sym->name()].push_back(ss.str());
   };
 
   for (i64 i = this->first_global; i < this->symbols.size(); i++) {

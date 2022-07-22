@@ -18,11 +18,6 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <tbb/concurrent_hash_map.h>
-#include <tbb/concurrent_unordered_map.h>
-#include <tbb/concurrent_vector.h>
-#include <tbb/spin_mutex.h>
-#include <tbb/task_group.h>
 #include <type_traits>
 #include <unistd.h>
 #include <unordered_map>
@@ -1587,22 +1582,22 @@ struct Context {
   bool has_lto_object = false;
 
   // Symbol table
-  tbb::concurrent_hash_map<std::string_view, SymPtr<E>, HashCmp> symbol_map;
-  tbb::concurrent_hash_map<std::string_view, std::shared_ptr<ComdatGroup>, HashCmp> comdat_groups;
-  tbb::concurrent_vector<std::unique_ptr<MergedSection<E>>> merged_sections;
-  tbb::concurrent_vector<std::unique_ptr<Chunk<E>>> output_chunks;
+  std::map<std::string_view, SymPtr<E>> symbol_map;
+  std::map<std::string_view, std::shared_ptr<ComdatGroup>> comdat_groups;
+  std::vector<std::unique_ptr<MergedSection<E>>> merged_sections;
+  std::vector<std::unique_ptr<Chunk<E>>> output_chunks;
   std::vector<std::unique_ptr<OutputSection<E>>> output_sections;
   FileCache<E, ObjectFile<E>> obj_cache;
   FileCache<E, SharedFile<E>> dso_cache;
 
   std::vector<std::unique_ptr<TimerRecord>> timer_records;
-  tbb::concurrent_vector<std::function<void()>> on_exit;
+  std::vector<std::function<void()>> on_exit;
 
-  tbb::concurrent_vector<std::unique_ptr<ObjectFile<E>>> obj_pool;
-  tbb::concurrent_vector<std::unique_ptr<SharedFile<E>>> dso_pool;
-  tbb::concurrent_vector<std::unique_ptr<u8[]>> string_pool;
-  tbb::concurrent_vector<std::unique_ptr<MappedFile<Context<E>>>> mf_pool;
-  tbb::concurrent_vector<std::vector<ElfRel<E>>> rel_pool;
+  std::vector<std::unique_ptr<ObjectFile<E>>> obj_pool;
+  std::vector<std::unique_ptr<SharedFile<E>>> dso_pool;
+  std::vector<std::unique_ptr<u8[]>> string_pool;
+  std::vector<std::unique_ptr<MappedFile<Context<E>>>> mf_pool;
+  std::vector<std::vector<ElfRel<E>>> rel_pool;
 
   // Symbol auxiliary data
   std::vector<SymbolAux> symbol_aux;
@@ -1625,7 +1620,7 @@ struct Context {
   std::atomic_bool has_gottp_rel = false;
   std::atomic_bool has_textrel = false;
 
-  tbb::concurrent_hash_map<std::string_view, std::vector<std::string>> undef_errors;
+  std::map<std::string_view, std::vector<std::string>> undef_errors;
 
   // Output chunks
   std::unique_ptr<OutputEhdr<E>> ehdr;
@@ -1954,14 +1949,9 @@ public:
 template <typename E>
 SymPtr<E> get_symbol(Context<E> &ctx, std::string_view key,
                       std::string_view name) {
-  typename decltype(ctx.symbol_map)::accessor acc;
-  ctx.symbol_map.insert(acc, {key,  std::make_shared<Symbol<E>>(name)});
-  return acc->second;
-  /*if(auto item = ctx.symbol_map.find(key); item!=ctx.symbol_map.cend()) return item->second;
-  else {
-    using pair_t = std::pair<std::string_view, SymPtr<E>>;
-    return ctx.symbol_map[key] = std::make_shared<Symbol<E>>(name);
-  }*/
+  if(const auto item = ctx.symbol_map.find(key); item==ctx.symbol_map.cend()) 
+    ctx.symbol_map[key] = std::make_shared<Symbol<E>>(name);
+  return ctx.symbol_map[key];
 }
 
 template <typename E>

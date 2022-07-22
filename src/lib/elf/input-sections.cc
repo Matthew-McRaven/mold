@@ -265,10 +265,8 @@ void InputSection<E>::record_undef_error(Context<E> &ctx, const ElfRel<E> &rel) 
 
   auto sym = file.symbols[rel.r_sym];
 
-  /*using pair_t = decltype(ctx.undef_errors)::value_type;
-  ctx.undef_errors.insert(pair_t({sym->name(), {ss.str()}}));*/
-  typename decltype(ctx.undef_errors)::const_accessor acc;
-  ctx.undef_errors.insert(acc, {sym->name(), {ss.str()}});
+    if(const auto item = ctx.undef_errors.find(sym->name()); item == ctx.undef_errors.cend())
+      ctx.undef_errors[sym->name()] = {ss.str()};
 }
 
 // Report all undefined symbols, grouped by symbol.
